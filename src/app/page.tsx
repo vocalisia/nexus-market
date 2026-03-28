@@ -275,6 +275,7 @@ export default function PredictionDashboard() {
   const { alerts, latestCritical, unreadCount, processSignals, dismissBanner, markAllRead, updateValidation } = useAlerts();
   const [showStatsPanel, setShowStatsPanel] = useState(false);
   const [showHistoryPanel, setShowHistoryPanel] = useState(false);
+  const [showChartModal, setShowChartModal] = useState(false);
   const { memory, resetMemory, winRateTrend } = useMemory();
   useAlertValidation({ alerts, onValidated: updateValidation });
 
@@ -749,7 +750,7 @@ export default function PredictionDashboard() {
               const dir = asset.aiDirection;
               return (
                 <button key={asset.id}
-                  onClick={() => setSelectedAssetId(asset.id)}
+                  onClick={() => { setSelectedAssetId(asset.id); setShowChartModal(true); }}
                   style={{
                     minWidth: 165,
                     flexShrink: 0,
@@ -1159,6 +1160,130 @@ export default function PredictionDashboard() {
             <p style={{ fontFamily: M, color: "#1C2338", fontSize: 11, letterSpacing: "0.06em" }}>
               THIS IS NOT FINANCIAL ADVICE — AI PREDICTIONS ARE INDICATIVE ONLY
             </p>
+          </div>
+        </div>
+      )}
+
+      {/* ═══════════════════════════════════════════════
+          CHART MODAL
+      ═══════════════════════════════════════════════ */}
+      {showChartModal && selectedAsset && (
+        <div
+          onClick={() => setShowChartModal(false)}
+          style={{
+            position: "fixed", inset: 0, zIndex: 999,
+            background: "rgba(0,0,0,0.75)",
+            display: "flex", alignItems: "center", justifyContent: "center",
+            padding: 24,
+          }}
+        >
+          <div
+            onClick={(e) => e.stopPropagation()}
+            style={{
+              background: "#0A0D18", border: "1px solid #1C2338",
+              borderRadius: 10, width: "100%", maxWidth: 900,
+              boxShadow: "0 40px 100px rgba(0,0,0,0.9)",
+              overflow: "hidden",
+            }}
+          >
+            {/* Modal header */}
+            <div style={{
+              padding: "14px 20px", borderBottom: "1px solid #1C2338",
+              display: "flex", alignItems: "center", justifyContent: "space-between",
+              background: "#111827",
+            }}>
+              <div style={{ display: "flex", alignItems: "baseline", gap: 12 }}>
+                <span style={{ fontFamily: R, fontWeight: 700, fontSize: 18, letterSpacing: "0.1em", color: "#F1F5F9" }}>
+                  {selectedAsset.symbol.toUpperCase()} / USD
+                </span>
+                <span style={{ fontFamily: M, fontWeight: 700, fontSize: 22, color: chartColor }}>
+                  {selectedAsset.price >= 1000
+                    ? "$" + selectedAsset.price.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })
+                    : selectedAsset.price >= 1
+                    ? "$" + selectedAsset.price.toFixed(4)
+                    : "$" + selectedAsset.price.toFixed(6)}
+                </span>
+                <span style={{
+                  fontFamily: M, fontSize: 13, fontWeight: 700,
+                  color: selectedAsset.change24h >= 0 ? "#34D399" : "#FB7185",
+                }}>
+                  {selectedAsset.change24h >= 0 ? "+" : ""}{selectedAsset.change24h.toFixed(2)}% 24H
+                </span>
+              </div>
+              <button onClick={() => setShowChartModal(false)} style={{
+                background: "rgba(255,255,255,0.08)", border: "1px solid #1C2338",
+                color: "#94A3B8", cursor: "pointer", width: 28, height: 28,
+                borderRadius: 4, fontSize: 16, display: "flex", alignItems: "center", justifyContent: "center",
+              }}>✕</button>
+            </div>
+
+            {/* Chart */}
+            <div style={{ height: 300, padding: "20px 24px 12px", position: "relative" }}>
+              <div className="scan-line" />
+              {selectedAsset.sparkline?.length > 0
+                ? <SparklineChart data={selectedAsset.sparkline} color={chartColor} />
+                : <div style={{ height: "100%", display: "flex", alignItems: "center", justifyContent: "center", color: "#1C2338", fontFamily: M, fontSize: 12 }}>NO DATA</div>
+              }
+            </div>
+
+            {/* Stats row */}
+            <div style={{
+              display: "grid", gridTemplateColumns: "repeat(6, 1fr)",
+              borderTop: "1px solid #1C2338", borderBottom: "1px solid #1C2338",
+            }}>
+              {([["1H", selectedAsset.change1h], ["24H", selectedAsset.change24h], ["7D", selectedAsset.change7d]] as [string, number][]).map(([label, val]) => (
+                <div key={label} style={{ padding: "10px 16px", borderRight: "1px solid #1C2338", textAlign: "center" }}>
+                  <div style={{ fontFamily: R, fontSize: 10, color: "#475569", letterSpacing: "0.12em", marginBottom: 3 }}>{label}</div>
+                  <div style={{ fontFamily: M, fontWeight: 700, fontSize: 14, color: val >= 0 ? "#34D399" : "#FB7185" }}>
+                    {val >= 0 ? "+" : ""}{val.toFixed(2)}%
+                  </div>
+                </div>
+              ))}
+              <div style={{ padding: "10px 16px", borderRight: "1px solid #1C2338", textAlign: "center" }}>
+                <div style={{ fontFamily: R, fontSize: 10, color: "#475569", letterSpacing: "0.12em", marginBottom: 3 }}>AI SCORE</div>
+                <div style={{ fontFamily: M, fontWeight: 700, fontSize: 14, color: getScoreColor(selectedAsset.aiScore) }}>{selectedAsset.aiScore}/100</div>
+              </div>
+              <div style={{ padding: "10px 16px", borderRight: "1px solid #1C2338", textAlign: "center" }}>
+                <div style={{ fontFamily: R, fontSize: 10, color: "#475569", letterSpacing: "0.12em", marginBottom: 3 }}>DIRECTION</div>
+                <div style={{ fontFamily: M, fontWeight: 700, fontSize: 14, color: getScoreColor(selectedAsset.aiScore) }}>
+                  {selectedAsset.aiDirection === "UP" ? "↑ BULL" : selectedAsset.aiDirection === "DOWN" ? "↓ BEAR" : "→ NEUT"}
+                </div>
+              </div>
+              {selectedAsset.tradePlan && selectedAsset.tradePlan.direction !== "WAIT" && (
+                <div style={{ padding: "10px 16px", textAlign: "center" }}>
+                  <div style={{ fontFamily: R, fontSize: 10, color: "#475569", letterSpacing: "0.12em", marginBottom: 3 }}>PLAN</div>
+                  <div style={{ fontFamily: M, fontWeight: 700, fontSize: 13, color: selectedAsset.tradePlan.direction === "LONG" ? "#34D399" : "#FB7185" }}>
+                    {selectedAsset.tradePlan.direction === "LONG" ? "▲ LONG" : "▼ SHORT"}
+                  </div>
+                </div>
+              )}
+            </div>
+
+            {/* Trade plan */}
+            {selectedAsset.tradePlan && selectedAsset.tradePlan.direction !== "WAIT" && (
+              <div style={{ display: "flex", gap: 28, padding: "14px 24px", flexWrap: "wrap", alignItems: "center" }}>
+                {([
+                  ["ENTRÉE", selectedAsset.tradePlan.entry, "#F1F5F9"],
+                  ["STOP",   selectedAsset.tradePlan.stopLoss, "#FB7185"],
+                  ["T1",     selectedAsset.tradePlan.target1, "#34D399"],
+                  ["T2",     selectedAsset.tradePlan.target2, "#34D399"],
+                ] as [string, number, string][]).map(([label, val, color]) => (
+                  <div key={label}>
+                    <div style={{ fontFamily: R, fontSize: 10, color: "#475569", letterSpacing: "0.1em", marginBottom: 2 }}>{label}</div>
+                    <div style={{ fontFamily: M, fontWeight: 700, fontSize: 15, color }}>
+                      {val >= 1000
+                        ? "$" + val.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })
+                        : val >= 1 ? "$" + val.toFixed(4)
+                        : "$" + val.toFixed(6)}
+                    </div>
+                  </div>
+                ))}
+                <div style={{ marginLeft: "auto" }}>
+                  <div style={{ fontFamily: R, fontSize: 10, color: "#F59E0B80", letterSpacing: "0.1em", marginBottom: 2 }}>STRATÉGIE</div>
+                  <div style={{ fontFamily: R, fontSize: 13, color: "#F59E0B" }}>{selectedAsset.tradePlan.strategy}</div>
+                </div>
+              </div>
+            )}
           </div>
         </div>
       )}
