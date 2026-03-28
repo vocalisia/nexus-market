@@ -27,9 +27,8 @@ export interface Alert {
 
 export type Freshness = "FRESH" | "WARM" | "OLD" | "EXPIRED";
 
-const STORAGE_KEY = "nexus_alerts";
+const STORAGE_KEY = "nexus_alerts_v2"; // bumped to discard old inverted SL/TP alerts
 const MAX_ALERTS = 100;
-const DEDUP_WINDOW_MS = 15 * 60 * 1000; // 15 min
 const EXPIRE_MS = 60 * 60 * 1000; // 60 min
 
 export function getFreshness(generatedAt: string): Freshness {
@@ -81,34 +80,37 @@ function isDuplicate(existing: Alert[], newAlert: { asset: string; type: string 
 export function useAlerts() {
   const [alerts, setAlerts] = useState<Alert[]>([]);
   const [latestCritical, setLatestCritical] = useState<Alert | null>(null);
+  // initialized: localStorage has been loaded; processSignals is gated on this
   const initialized = useRef(false);
 
-  // Load from localStorage on mount
+  // Load from localStorage on mount — must complete before processSignals runs
   useEffect(() => {
     if (initialized.current) return;
-    initialized.current = true;
     const stored = loadAlerts();
+    // Mark ready BEFORE setting state so processSignals called synchronously
+    // after this effect sees the correct prev
+    initialized.current = true;
     setAlerts(stored);
-    // Find latest undismissed critical
     const critical = stored.find(
       (a) => a.severity === "HIGH" && !a.dismissedAt && getFreshness(a.generatedAt) !== "EXPIRED"
     );
     if (critical) setLatestCritical(critical);
   }, []);
 
-  // Persist on change
+  // Persist on change — skip the very first render (data came from localStorage)
   useEffect(() => {
     if (!initialized.current) return;
     saveAlerts(alerts);
   }, [alerts]);
 
   // Process new signals from API
-  // Uses functional setAlerts to always read the latest state — avoids stale closure duplicates
+  // Gated on initialized.current so localStorage is always in prev before dedup runs
   const processSignals = useCallback(
     (
       signals: Array<{ asset: string; type: string; message: string; severity: string; generatedAt?: string; indicatorsSnapshot?: AlertIndicatorsSnapshot }>,
       assets: Array<{ id: string; symbol: string; price: number; category: string; tradePlan?: { entry?: number; stopLoss?: number; target1?: number } }>
     ) => {
+      if (!initialized.current) return; // wait for localStorage load
       setAlerts((prev) => {
         const toAdd: Alert[] = [];
         let newCritical: Alert | null = null;
