@@ -1,5 +1,5 @@
 import type { AssetCategory, AIDirection, Signal } from "@/types/market";
-import { calculateRSI } from "./indicators";
+import { calculateRSI, calculateADX, calculateStochRSI } from "./indicators";
 import { isMarketOpen } from "./marketHours";
 
 // --- Category-specific scoring configs ---
@@ -57,7 +57,9 @@ export function computeAIScore(
   change7d: number,
   rsi: number,
   category: AssetCategory,
-  sentiment = 50
+  sentiment = 50,
+  adx = 0,
+  stochRsiK = 50
 ): number {
   const cfg = SCORING_CONFIGS[category];
 
@@ -65,11 +67,18 @@ export function computeAIScore(
   const ch24 = normalize(change24h, cfg.change24hRange[0], cfg.change24hRange[1]);
   const ch7d = normalize(change7d, cfg.change7dRange[0], cfg.change7dRange[1]);
 
-  const score =
+  const baseScore =
     rsiScore * cfg.rsiWeight +
     ch24 * cfg.change24hWeight +
     ch7d * cfg.change7dWeight +
     sentiment * cfg.sentimentWeight;
+
+  // ADX modifier
+  const adxMod = adx > 25 ? 5 : adx > 0 ? -10 : 0;
+  // StochRSI modifier
+  const stochMod = stochRsiK < 20 ? 8 : stochRsiK > 80 ? -8 : 0;
+
+  const score = baseScore + adxMod + stochMod;
 
   return Math.round(Math.min(100, Math.max(0, score)));
 }
@@ -106,18 +115,26 @@ export function generateSignal(
   change7d: number,
   score: number,
   direction: AIDirection,
-  category: AssetCategory
+  category: AssetCategory,
+  sparkline: number[] = []
 ): Signal | null {
   // Block signals on closed markets
   const status = isMarketOpen(category);
   if (!status.isOpen) return null;
 
+  // ADX filter: ignore RSI signals in ranging markets
+  let adx = 0;
+  if (sparkline.length >= 20) {
+    // Use sparkline as proxy for high/low/close (approximation from hourly close prices)
+    adx = calculateADX(sparkline, sparkline, sparkline) ?? 0;
+  }
+
   const t = SIGNAL_THRESHOLDS[category];
   const parts: string[] = [];
   let severity: "low" | "medium" | "high" = "low";
 
-  if (rsi < t.rsiOversold) { parts.push("RSI oversold"); severity = "high"; }
-  else if (rsi > t.rsiOverbought) { parts.push("RSI overbought"); severity = "high"; }
+  if (rsi < t.rsiOversold && adx > 25) { parts.push("RSI oversold"); severity = "high"; }
+  else if (rsi > t.rsiOverbought && adx > 25) { parts.push("RSI overbought"); severity = "high"; }
   else if (rsi < t.rsiWarnLow) { parts.push("RSI approaching oversold"); severity = "medium"; }
   else if (rsi > t.rsiWarnHigh) { parts.push("RSI approaching overbought"); severity = "medium"; }
 
@@ -127,7 +144,29 @@ export function generateSignal(
   if (change7d > t.trend7d) { parts.push("strong 7d uptrend"); severity = "high"; }
   else if (change7d < -t.trend7d) { parts.push("strong 7d downtrend"); severity = "high"; }
 
+  // Ranging market: downgrade severity if ADX is very low
+  if (adx > 0 && adx < 20 && parts.length > 0) {
+    severity = "low";
+  }
+
+  // StochRSI confirmation bonus
+  if (sparkline.length >= 20) {
+    const stochRsi = calculateStochRSI(sparkline);
+    if (stochRsi && stochRsi.k < 20 && direction === "UP") {
+      parts.push("StochRSI oversold");
+      if (severity === "low") severity = "medium";
+    } else if (stochRsi && stochRsi.k > 80 && direction === "DOWN") {
+      parts.push("StochRSI overbought");
+      if (severity === "low") severity = "medium";
+    }
+  }
+
   if (parts.length === 0) return null;
+
+  // Upgrade to high when ADX is strong and RSI is at an extreme
+  if (adx > 30 && (rsi < t.rsiOversold || rsi > t.rsiOverbought) && severity !== "high") {
+    severity = "high";
+  }
 
   const type = direction === "UP" ? "BUY" : direction === "DOWN" ? "SELL" : "WATCH";
 

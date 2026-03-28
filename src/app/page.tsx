@@ -61,6 +61,7 @@ interface MarketData {
   polymarket: PolymarketData[];
   signals: Signal[];
   lastUpdated: string;
+  demo?: boolean;
 }
 
 type FilterCategory = "ALL" | "CRYPTO" | "FOREX" | "STOCKS" | "COMMODITIES";
@@ -332,6 +333,9 @@ export default function PredictionDashboard() {
               <div className="live-dot" style={{ width: 7, height: 7, borderRadius: "50%", backgroundColor: "#F59E0B", flexShrink: 0 }} />
               <span style={{ fontFamily: R, fontWeight: 700, fontSize: 11, letterSpacing: "0.14em", color: "#F59E0B" }}>LIVE</span>
             </div>
+            {marketData?.demo && (
+              <span style={{ fontFamily: M, fontSize: 10, fontWeight: 700, color: "#F59E0B", background: "#F59E0B15", border: "1px solid #F59E0B30", padding: "2px 6px", letterSpacing: "0.1em" }}>DEMO</span>
+            )}
             {marketData?.lastUpdated && (
               <span style={{ fontFamily: M, color: "#475569", fontSize: 12 }}>
                 {formatTimestamp(marketData.lastUpdated)}

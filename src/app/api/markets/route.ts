@@ -3,6 +3,7 @@ import type { Asset, Signal } from "@/types/market";
 import { calculateRSI } from "@/lib/indicators";
 import { computeAIScore, getDirection, generateSignal } from "@/lib/scoring";
 import { correlatePolymarket, computePolymarketSentiment } from "@/lib/correlation";
+import { computeMacroContext, getMacroAdjustment } from "@/lib/macroCorrelation";
 import { fetchCoinGecko, fetchCommodities, fetchTwelveForex, fetchPolymarket } from "@/lib/providers";
 import { buildTradePlan } from "@/lib/tradePlan";
 
@@ -117,14 +118,21 @@ export async function GET() {
       ...(stocksResult.status === "fulfilled" ? stocksResult.value : []),
     ];
 
-    // 3. Generate signals + trade plans for all assets
+    // 3. Macro correlation context
+    const macroCtx = computeMacroContext(allAssets);
+
+    // 4. Apply macro adjustments + generate signals
     const signals: Signal[] = [];
     const assetsWithPlans: Asset[] = allAssets.map((a) => {
       const rsi = calculateRSI(a.sparkline);
+      const { adjustment } = getMacroAdjustment(a.id, macroCtx);
+      const adjustedScore = Math.min(100, Math.max(0, a.aiScore + adjustment));
+      const adjustedDirection = adjustedScore > 55 ? "UP" as const : adjustedScore < 45 ? "DOWN" as const : "NEUTRAL" as const;
+
       const signal = generateSignal(
         a.name, a.symbol, rsi,
         a.change24h, a.change7d,
-        a.aiScore, a.aiDirection, a.category
+        adjustedScore, adjustedDirection, a.category, a.sparkline
       );
       if (signal) signals.push(signal);
 
@@ -139,7 +147,7 @@ export async function GET() {
     });
 
     return NextResponse.json(
-      { assets: assetsWithPlans, polymarket, signals, lastUpdated: new Date().toISOString() },
+      { assets: assetsWithPlans, polymarket, signals, lastUpdated: new Date().toISOString(), demo: !TD_KEY },
       { status: 200, headers: { "Cache-Control": "public, s-maxage=60, stale-while-revalidate=30" } }
     );
   } catch (error: unknown) {

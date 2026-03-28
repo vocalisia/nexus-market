@@ -23,9 +23,13 @@ export interface Indicators {
   smaCross: { sma50: number; sma200: number; signal: "GOLDEN" | "DEATH" | "NONE" };
   volumeProfile: { current: number; average: number; ratio: number; spike: boolean };
   atr: { value: number; percent: number };
+  adx: number; // 0-100
+  stochRsi: { k: number; d: number };
+  obv: { value: number; rising: boolean };
+  sar: number;
 }
 
-export type IndicatorKey = "rsi" | "macd" | "bollinger" | "smaCross" | "volumeProfile" | "atr";
+export type IndicatorKey = "rsi" | "macd" | "bollinger" | "smaCross" | "volumeProfile" | "atr" | "adx" | "stochRsi" | "obv";
 
 export interface Asset {
   id: string;
