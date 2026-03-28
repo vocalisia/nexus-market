@@ -61,6 +61,14 @@ const SCORING_CONFIGS: Record<AssetCategory, ScoringConfig> = {
     change24hRange: [-5, 5],
     change7dRange: [-10, 10],
   },
+  STOCKS: {
+    rsiWeight: 0.30,
+    change24hWeight: 0.35,
+    change7dWeight: 0.25,
+    sentimentWeight: 0.10,
+    change24hRange: [-5, 5],
+    change7dRange: [-15, 15],
+  },
 };
 
 function normalize(value: number, min: number, max: number): number {
@@ -107,9 +115,10 @@ interface SignalThresholds {
 }
 
 const SIGNAL_THRESHOLDS: Record<AssetCategory, SignalThresholds> = {
-  CRYPTO: { rsiOversold: 30, rsiOverbought: 70, rsiWarnLow: 40, rsiWarnHigh: 60, momentum24h: 5, trend7d: 15 },
-  FOREX: { rsiOversold: 25, rsiOverbought: 75, rsiWarnLow: 35, rsiWarnHigh: 65, momentum24h: 1, trend7d: 3 },
-  COMMODITIES: { rsiOversold: 28, rsiOverbought: 72, rsiWarnLow: 38, rsiWarnHigh: 62, momentum24h: 3, trend7d: 8 },
+  CRYPTO:     { rsiOversold: 30, rsiOverbought: 70, rsiWarnLow: 40, rsiWarnHigh: 60, momentum24h: 5, trend7d: 15 },
+  FOREX:      { rsiOversold: 25, rsiOverbought: 75, rsiWarnLow: 35, rsiWarnHigh: 65, momentum24h: 1, trend7d: 3  },
+  COMMODITIES:{ rsiOversold: 28, rsiOverbought: 72, rsiWarnLow: 38, rsiWarnHigh: 62, momentum24h: 3, trend7d: 8  },
+  STOCKS:     { rsiOversold: 30, rsiOverbought: 70, rsiWarnLow: 40, rsiWarnHigh: 60, momentum24h: 2, trend7d: 10 },
 };
 
 export function generateSignal(

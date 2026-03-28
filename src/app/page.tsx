@@ -1,7 +1,23 @@
 "use client";
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useMemo } from "react";
+import { computeAllIndicators, scoreIndicators, computeCombinedScore } from "@/lib/indicators";
+import type { IndicatorResult } from "@/lib/indicators";
 
 // ─── Types ───────────────────────────────────────────────────
+
+interface TradePlan {
+  direction: "LONG" | "SHORT" | "WAIT";
+  strategy: string;
+  entry: number;
+  stopLoss: number;
+  target1: number;
+  target2: number;
+  stopPercent: number;
+  target1Percent: number;
+  target2Percent: number;
+  confidence: number;
+  reasons: string[];
+}
 
 interface Asset {
   id: string;
@@ -17,6 +33,7 @@ interface Asset {
   aiScore: number;
   aiDirection: "UP" | "DOWN" | "NEUTRAL";
   category: "CRYPTO" | "FOREX" | "STOCKS" | "COMMODITIES";
+  tradePlan?: TradePlan;
 }
 
 interface Signal {
@@ -32,13 +49,11 @@ interface PolymarketData {
   liquidity: number;
   bestBid: number;
   bestAsk: number;
+  correlatedAssets: string[];
 }
 
 interface MarketData {
-  crypto: Asset[];
-  stocks: Asset[];
-  forex: Asset[];
-  commodities: Asset[];
+  assets: Asset[];
   polymarket: PolymarketData[];
   signals: Signal[];
   lastUpdated: string;
@@ -173,22 +188,18 @@ export default function PredictionDashboard() {
   const [filter, setFilter] = useState<FilterCategory>("ALL");
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [activeIndicators, setActiveIndicators] = useState<string[]>(["rsi", "macd", "bollinger"]);
+  const [showIndicators, setShowIndicators] = useState(false);
 
   const fetchData = useCallback(async () => {
     try {
       const res = await fetch("/api/markets");
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
       const data: MarketData = await res.json();
-      if (!data.stocks) data.stocks = [];
-      if (!data.forex) data.forex = [];
-      if (!data.commodities) data.commodities = [];
       setMarketData(data);
       setError(null);
       setSelectedAssetId((prev) => {
-        if (!prev) {
-          const all = [...(data.crypto ?? []), ...(data.stocks ?? []), ...(data.forex ?? []), ...(data.commodities ?? [])];
-          return all.length > 0 ? all[0].id : null;
-        }
+        if (!prev && data.assets?.length > 0) return data.assets[0].id;
         return prev;
       });
     } catch (err: unknown) {
@@ -204,9 +215,7 @@ export default function PredictionDashboard() {
     return () => clearInterval(interval);
   }, [fetchData]);
 
-  const allAssets: Asset[] = marketData
-    ? [...(marketData.crypto ?? []), ...(marketData.stocks ?? []), ...(marketData.forex ?? []), ...(marketData.commodities ?? [])]
-    : [];
+  const allAssets: Asset[] = marketData?.assets ?? [];
 
   const filteredAssets = filter === "ALL"
     ? allAssets
@@ -219,6 +228,21 @@ export default function PredictionDashboard() {
   const chartColor = selectedAsset
     ? selectedAsset.change7d >= 0 ? "#34D399" : "#FB7185"
     : "#34D399";
+
+  const selectedIndicators = useMemo(() => {
+    if (!selectedAsset?.sparkline?.length) return null;
+    return computeAllIndicators(selectedAsset.sparkline);
+  }, [selectedAsset?.id, selectedAsset?.sparkline]);
+
+  const indicatorResults = useMemo(() => {
+    if (!selectedIndicators) return null;
+    return scoreIndicators(selectedIndicators);
+  }, [selectedIndicators]);
+
+  const enhancedScore = useMemo(() => {
+    if (!selectedIndicators || !selectedAsset) return null;
+    return computeCombinedScore(selectedIndicators, activeIndicators, selectedAsset.change24h);
+  }, [selectedIndicators, activeIndicators, selectedAsset?.change24h]);
 
   const tickerItems = allAssets.length > 0
     ? [...allAssets, ...allAssets]
@@ -494,7 +518,161 @@ export default function PredictionDashboard() {
                     <div className="score-bar-fill" style={{ height: "100%", width: `${selectedAsset.aiScore}%`, backgroundColor: getScoreColor(selectedAsset.aiScore) }} />
                   </div>
                 </div>
+
+                {/* TRADE PLAN */}
+                {selectedAsset.tradePlan && selectedAsset.tradePlan.direction !== "WAIT" && (
+                  <>
+                    <div style={{ height: 1, backgroundColor: "#1C2338", margin: "16px 0" }} />
+                    <div>
+                      {/* Header */}
+                      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 10 }}>
+                        <span style={{ fontFamily: R, fontWeight: 700, fontSize: 11, letterSpacing: "0.14em", color: "#F59E0B" }}>◈ TRADE PLAN</span>
+                        <span style={{ fontFamily: R, fontWeight: 700, fontSize: 10, letterSpacing: "0.1em",
+                          color: selectedAsset.tradePlan.direction === "LONG" ? "#34D399" : "#FB7185",
+                          border: `1px solid ${selectedAsset.tradePlan.direction === "LONG" ? "#34D39940" : "#FB718540"}`,
+                          padding: "1px 6px",
+                        }}>
+                          {selectedAsset.tradePlan.direction === "LONG" ? "▲ LONG" : "▼ SHORT"}
+                        </span>
+                      </div>
+
+                      {/* Entry / Stop / Targets */}
+                      <div style={{ display: "flex", flexDirection: "column", gap: 5, marginBottom: 12 }}>
+                        {([
+                          { label: "ENTRÉE",  val: selectedAsset.tradePlan.entry,   pct: null,                                          color: "#F1F5F9" },
+                          { label: "STOP",    val: selectedAsset.tradePlan.stopLoss, pct: selectedAsset.tradePlan.stopPercent,           color: "#FB7185" },
+                          { label: "CIBLE 1", val: selectedAsset.tradePlan.target1,  pct: selectedAsset.tradePlan.target1Percent,        color: "#34D399" },
+                          { label: "CIBLE 2", val: selectedAsset.tradePlan.target2,  pct: selectedAsset.tradePlan.target2Percent,        color: "#34D399" },
+                        ] as { label: string; val: number; pct: number | null; color: string }[]).map(({ label, val, pct, color }) => (
+                          <div key={label} style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", gap: 4 }}>
+                            <span style={{ fontFamily: R, fontSize: 10, color: "#475569", letterSpacing: "0.1em", width: 50, flexShrink: 0 }}>{label}</span>
+                            <span style={{ fontFamily: M, fontSize: 12, color, flex: 1, textAlign: "right" }}>{formatPrice(val)}</span>
+                            {pct !== null && (
+                              <span style={{ fontFamily: M, fontSize: 10, color: pct >= 0 ? "#34D399" : "#FB7185", width: 44, textAlign: "right", flexShrink: 0 }}>
+                                {pct >= 0 ? "+" : ""}{pct.toFixed(1)}%
+                              </span>
+                            )}
+                          </div>
+                        ))}
+                      </div>
+
+                      {/* Strategy + reasons */}
+                      <div style={{ fontFamily: R, fontWeight: 700, fontSize: 10, color: "#F59E0B80", letterSpacing: "0.12em", marginBottom: 5 }}>
+                        {selectedAsset.tradePlan.strategy.toUpperCase()}
+                      </div>
+                      {selectedAsset.tradePlan.reasons.map((r, i) => (
+                        <div key={i} style={{ fontFamily: R, fontSize: 11, color: "#475569", lineHeight: 1.5 }}>· {r}</div>
+                      ))}
+                    </div>
+                  </>
+                )}
+
+                {selectedAsset.tradePlan?.direction === "WAIT" && (
+                  <>
+                    <div style={{ height: 1, backgroundColor: "#1C2338", margin: "16px 0" }} />
+                    <div style={{ fontFamily: R, fontSize: 11, color: "#1C2338", letterSpacing: "0.1em", textAlign: "center", padding: "8px 0" }}>
+                      ◈ NO CLEAR TRADE SETUP
+                    </div>
+                  </>
+                )}
               </div>
+            </div>
+          )}
+
+          {/* ── INDICATORS PANEL ── */}
+          {selectedAsset && indicatorResults && (
+            <div style={{ backgroundColor: "#0A0D18", border: "1px solid #1C2338" }}>
+              {/* Toggle button */}
+              <button
+                onClick={() => setShowIndicators(!showIndicators)}
+                style={{
+                  width: "100%", padding: "12px 18px", display: "flex", alignItems: "center", justifyContent: "space-between",
+                  backgroundColor: "transparent", border: "none", borderBottom: showIndicators ? "1px solid #1C2338" : "none",
+                  cursor: "pointer", fontFamily: R,
+                }}
+              >
+                <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+                  <span style={{ fontWeight: 700, fontSize: 13, letterSpacing: "0.12em", color: "#F59E0B" }}>
+                    {showIndicators ? "▼" : "▶"} INDICATORS
+                  </span>
+                  <span style={{ fontFamily: M, fontSize: 10, fontWeight: 700, color: "#F59E0B", backgroundColor: "#F59E0B15", border: "1px solid #F59E0B30", padding: "1px 7px" }}>
+                    {activeIndicators.length}/6
+                  </span>
+                  {enhancedScore && (
+                    <span style={{
+                      fontFamily: M, fontSize: 11, fontWeight: 700, padding: "2px 8px",
+                      color: enhancedScore.direction === "UP" ? "#34D399" : enhancedScore.direction === "DOWN" ? "#FB7185" : "#F59E0B",
+                      backgroundColor: enhancedScore.direction === "UP" ? "#34D39915" : enhancedScore.direction === "DOWN" ? "#FB718515" : "#F59E0B15",
+                      border: `1px solid ${enhancedScore.direction === "UP" ? "#34D39930" : enhancedScore.direction === "DOWN" ? "#FB718530" : "#F59E0B30"}`,
+                    }}>
+                      ENHANCED: {enhancedScore.score}% {enhancedScore.direction === "UP" ? "↑" : enhancedScore.direction === "DOWN" ? "↓" : "→"}
+                      {enhancedScore.convergence > 0 && ` · ${enhancedScore.convergence}% convergence`}
+                    </span>
+                  )}
+                </div>
+                <span style={{ color: "#475569", fontSize: 11, fontFamily: R }}>
+                  {showIndicators ? "Masquer" : "Afficher les indicateurs"}
+                </span>
+              </button>
+
+              {/* Indicator toggles + results */}
+              {showIndicators && (
+                <div style={{ padding: "14px 18px" }}>
+                  {/* Toggle buttons */}
+                  <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginBottom: 14 }}>
+                    {Object.entries(indicatorResults).map(([key, ind]) => {
+                      const isActive = activeIndicators.includes(key);
+                      const color = ind.bullish ? "#34D399" : "#FB7185";
+                      return (
+                        <button
+                          key={key}
+                          onClick={() => setActiveIndicators((prev) =>
+                            prev.includes(key) ? prev.filter((k) => k !== key) : [...prev, key]
+                          )}
+                          style={{
+                            padding: "6px 14px", borderRadius: 4, cursor: "pointer",
+                            fontFamily: M, fontSize: 11, fontWeight: isActive ? 700 : 400,
+                            backgroundColor: isActive ? `${color}15` : "#0F1424",
+                            border: `1px solid ${isActive ? `${color}50` : "#1C2338"}`,
+                            color: isActive ? color : "#475569",
+                            transition: "all 0.2s",
+                          }}
+                        >
+                          {isActive ? "✓ " : ""}{ind.label}
+                        </button>
+                      );
+                    })}
+                  </div>
+
+                  {/* Active indicator details */}
+                  <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(220px, 1fr))", gap: 10 }}>
+                    {activeIndicators.map((key) => {
+                      const ind = indicatorResults[key] as IndicatorResult | undefined;
+                      if (!ind) return null;
+                      const barColor = ind.bullish ? "#34D399" : "#FB7185";
+                      return (
+                        <div key={key} style={{ backgroundColor: "#0F1424", border: "1px solid #1C2338", padding: "10px 14px" }}>
+                          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 6 }}>
+                            <span style={{ fontFamily: R, fontWeight: 700, fontSize: 12, color: "#94A3B8", letterSpacing: "0.08em" }}>
+                              {ind.label}
+                            </span>
+                            <span style={{ fontFamily: M, fontSize: 13, fontWeight: 700, color: barColor }}>
+                              {ind.score}/100
+                            </span>
+                          </div>
+                          {/* Score bar */}
+                          <div style={{ height: 4, backgroundColor: "#1C2338", borderRadius: 2, marginBottom: 6, overflow: "hidden" }}>
+                            <div className="score-bar-fill" style={{ height: "100%", width: `${ind.score}%`, backgroundColor: barColor, borderRadius: 2 }} />
+                          </div>
+                          <div style={{ fontFamily: R, fontSize: 11, color: barColor }}>
+                            {ind.signal}
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                </div>
+              )}
             </div>
           )}
 
