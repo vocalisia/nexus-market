@@ -4,8 +4,11 @@ import { computeAllIndicators, scoreIndicators, computeCombinedScore } from "@/l
 import type { IndicatorResult } from "@/lib/indicators";
 import { useBinanceWs } from "@/lib/useBinanceWs";
 import { useAlerts, getFreshness, getAgeText } from "@/lib/useAlerts";
-import type { Alert } from "@/lib/useAlerts";
 import { isMarketOpen } from "@/lib/marketHours";
+import { useAlertValidation } from "@/hooks/useAlertValidation";
+import { useMemory } from "@/hooks/useMemory";
+import { AlertResultBadge } from "@/components/AlertResultBadge";
+import { PerformanceStats } from "@/components/PerformanceStats";
 
 // ─── Types ───────────────────────────────────────────────────
 
@@ -204,6 +207,49 @@ function CardSparkline({ data, color }: { data: number[]; color: string }) {
   );
 }
 
+// ─── Success Rate Circle ─────────────────────────────────────
+
+function SuccessCircle({ rate, total }: { rate: number; total: number }) {
+  const S = 36; // SVG size fits in 54px header
+  const cx = S / 2, cy = S / 2, R = 14;
+  const circ = 2 * Math.PI * R;
+  const filled = (rate / 100) * circ;
+  const color = rate >= 60 ? "#34D399" : rate >= 45 ? "#F59E0B" : total === 0 ? "#334155" : "#FB7185";
+
+  return (
+    <div
+      style={{ display: "flex", alignItems: "center", gap: 6, cursor: "default" }}
+      title={total === 0 ? "Aucune validation dans les 24h" : `${total} alertes validées dans les 24h`}
+    >
+      <svg width={S} height={S} viewBox={`0 0 ${S} ${S}`}>
+        <circle cx={cx} cy={cy} r={R} fill="none" stroke="#1E293B" strokeWidth="3" />
+        {total > 0 && (
+          <circle
+            cx={cx} cy={cy} r={R}
+            fill="none" stroke={color} strokeWidth="3"
+            strokeDasharray={`${filled} ${circ - filled}`}
+            strokeLinecap="round"
+            transform={`rotate(-90 ${cx} ${cy})`}
+            style={{ filter: `drop-shadow(0 0 3px ${color}80)` }}
+          />
+        )}
+        <text x={cx} y={cy} dominantBaseline="central" textAnchor="middle"
+          fontSize={total === 0 ? "7" : "8"} fontWeight="700" fill={color} fontFamily="monospace">
+          {total === 0 ? "—" : `${rate}%`}
+        </text>
+      </svg>
+      <div style={{ display: "flex", flexDirection: "column", lineHeight: 1 }}>
+        <span style={{ fontSize: 9, fontWeight: 700, color, fontFamily: "var(--font-jetbrains), monospace" }}>
+          {total === 0 ? "—" : `${rate}%`}
+        </span>
+        <span style={{ fontSize: 8, color: "#475569", fontFamily: "var(--font-rajdhani), sans-serif", letterSpacing: "0.06em" }}>
+          SUCCÈS 24H
+        </span>
+      </div>
+    </div>
+  );
+}
+
 // ─── Constants ───────────────────────────────────────────────
 
 const ACTIVE_FILTERS: FilterCategory[] = ["ALL", "CRYPTO", "FOREX", "STOCKS", "COMMODITIES"];
@@ -225,7 +271,21 @@ export default function PredictionDashboard() {
   const [showAlertPanel, setShowAlertPanel] = useState(false);
 
   // Alert system
-  const { alerts, latestCritical, unreadCount, processSignals, dismissBanner, markAllRead } = useAlerts();
+  const { alerts, latestCritical, unreadCount, processSignals, dismissBanner, markAllRead, updateValidation } = useAlerts();
+  const [showStatsPanel, setShowStatsPanel] = useState(false);
+  const { memory, resetMemory, winRateTrend } = useMemory();
+  useAlertValidation({ alerts, onValidated: updateValidation });
+
+  // 24h success rate from memory history
+  const rate24h = useMemo(() => {
+    const cutoff = Date.now() - 24 * 60 * 60 * 1000;
+    const recent = memory.history.filter(
+      (r) => new Date(r.validatedAt).getTime() >= cutoff && r.result !== "NEUTRAL"
+    );
+    if (recent.length === 0) return { rate: 0, total: 0 };
+    const wins = recent.filter((r) => r.result === "WIN").length;
+    return { rate: Math.round((wins / recent.length) * 100), total: recent.length };
+  }, [memory.history]);
 
   const fetchData = useCallback(async () => {
     try {
@@ -327,6 +387,9 @@ export default function PredictionDashboard() {
             </span>
           </div>
 
+          {/* 24h Success Rate Circle */}
+          <SuccessCircle rate={rate24h.rate} total={rate24h.total} />
+
           {/* Live + time */}
           <div style={{ display: "flex", alignItems: "center", gap: 20 }}>
             <div style={{ display: "flex", alignItems: "center", gap: 7 }}>
@@ -364,6 +427,41 @@ export default function PredictionDashboard() {
                 >{cat}</button>
               );
             })}
+          {/* Precision indicator */}
+          {memory.totalValidated > 0 && (
+            <div
+              style={{
+                display: "flex", alignItems: "center", gap: 6,
+                padding: "4px 10px", borderRadius: 4,
+                background: memory.globalWinRate >= 60 ? "rgba(52,211,153,0.1)" : memory.globalWinRate >= 45 ? "rgba(245,158,11,0.1)" : "rgba(251,113,133,0.1)",
+                border: `1px solid ${memory.globalWinRate >= 60 ? "#34D39940" : memory.globalWinRate >= 45 ? "#F59E0B40" : "#FB718540"}`,
+                cursor: "pointer",
+              }}
+              onClick={() => setShowStatsPanel(!showStatsPanel)}
+              title="Voir les performances IA"
+            >
+              <span style={{ fontSize: 10, fontWeight: 700, fontFamily: "var(--font-jetbrains), monospace", color: memory.globalWinRate >= 60 ? "#34D399" : memory.globalWinRate >= 45 ? "#F59E0B" : "#FB7185" }}>
+                {memory.globalWinRate}% WIN
+              </span>
+              <span style={{ fontSize: 10, color: "#475569", fontFamily: "var(--font-jetbrains), monospace" }}>
+                {memory.totalPoints >= 0 ? "+" : ""}{memory.totalPoints} PP
+              </span>
+            </div>
+          )}
+
+          {/* STATS button */}
+          <button
+            onClick={() => setShowStatsPanel(!showStatsPanel)}
+            style={{
+              fontFamily: "var(--font-rajdhani), sans-serif", fontWeight: 700, fontSize: 11,
+              letterSpacing: "0.1em", padding: "4px 12px",
+              border: `1px solid ${showStatsPanel ? "#3B82F6" : "#1C2338"}`,
+              backgroundColor: showStatsPanel ? "#3B82F610" : "transparent",
+              color: showStatsPanel ? "#3B82F6" : "#64748B",
+              cursor: "pointer", borderRadius: 1, transition: "all 0.15s",
+            }}
+          >STATS</button>
+
           {/* Alert Bell */}
           <div style={{ position: "relative" }}>
             <button
@@ -388,6 +486,23 @@ export default function PredictionDashboard() {
                 }}>{unreadCount}</span>
               )}
             </button>
+
+            {/* Stats Panel */}
+            {showStatsPanel && (
+              <div style={{
+                position: "absolute", top: 48, right: 0, width: 460,
+                background: "#0A0D18", border: "1px solid #1C2338",
+                borderRadius: 8, boxShadow: "0 20px 60px rgba(0,0,0,0.8)",
+                zIndex: 100, overflow: "hidden", maxHeight: "80vh", overflowY: "auto",
+                padding: "16px",
+              }}>
+                <PerformanceStats
+                  memory={memory}
+                  onReset={resetMemory}
+                  winRateTrend={winRateTrend()}
+                />
+              </div>
+            )}
 
             {/* Alert Panel */}
             {showAlertPanel && (
@@ -453,6 +568,15 @@ export default function PredictionDashboard() {
                               <span><span style={{ color: "#475569" }}>Entry </span><span style={{ color: "#94a3b8" }}>${alert.entry.toLocaleString()}</span></span>
                               {alert.stopLoss && <span><span style={{ color: "#475569" }}>SL </span><span style={{ color: "#94a3b8" }}>${alert.stopLoss.toLocaleString()}</span></span>}
                               {alert.target1 && <span><span style={{ color: "#475569" }}>T1 </span><span style={{ color: "#94a3b8" }}>${alert.target1.toLocaleString()}</span></span>}
+                            </div>
+                          )}
+                          {!isExpired && alert.type !== "WATCH" && (
+                            <div style={{ marginTop: 8, display: "flex", justifyContent: "flex-end" }}>
+                              <AlertResultBadge
+                                validation={alert.validation}
+                                generatedAt={alert.generatedAt}
+                                category={alert.category}
+                              />
                             </div>
                           )}
                           {!isExpired && (

@@ -2,6 +2,9 @@
 import { useState, useEffect, useCallback, useRef } from "react";
 import { isMarketOpen } from "./marketHours";
 import type { AssetCategory } from "@/types/market";
+import type { AlertIndicatorsSnapshot, AlertValidation } from "./memoryEngine";
+
+export type { AlertIndicatorsSnapshot, AlertValidation };
 
 export interface Alert {
   id: string;
@@ -18,6 +21,8 @@ export interface Alert {
   dismissedAt?: string | null;
   read: boolean;
   category?: AssetCategory;
+  indicatorsSnapshot?: AlertIndicatorsSnapshot;
+  validation?: AlertValidation;
 }
 
 export type Freshness = "FRESH" | "WARM" | "OLD" | "EXPIRED";
@@ -98,55 +103,57 @@ export function useAlerts() {
   }, [alerts]);
 
   // Process new signals from API
+  // Uses functional setAlerts to always read the latest state — avoids stale closure duplicates
   const processSignals = useCallback(
-    (signals: Array<{ asset: string; type: string; message: string; severity: string; generatedAt?: string }>, assets: Array<{ id: string; symbol: string; price: number; category: string; tradePlan?: { entry?: number; stopLoss?: number; target1?: number } }>) => {
-      const newAlerts: Alert[] = [];
+    (
+      signals: Array<{ asset: string; type: string; message: string; severity: string; generatedAt?: string; indicatorsSnapshot?: AlertIndicatorsSnapshot }>,
+      assets: Array<{ id: string; symbol: string; price: number; category: string; tradePlan?: { entry?: number; stopLoss?: number; target1?: number } }>
+    ) => {
+      setAlerts((prev) => {
+        const toAdd: Alert[] = [];
+        let newCritical: Alert | null = null;
 
-      for (const signal of signals) {
-        if (isDuplicate(alerts, signal)) continue;
+        for (const signal of signals) {
+          if (isDuplicate(prev, signal)) continue;
 
-        // Find matching asset for price/trade plan
-        const matchedAsset = assets.find((a) =>
-          signal.asset.toLowerCase().includes(a.symbol.toLowerCase()) ||
-          signal.asset.toLowerCase().includes(a.id.toLowerCase())
-        );
+          const matchedAsset = assets.find((a) =>
+            signal.asset.toLowerCase().includes(a.symbol.toLowerCase()) ||
+            signal.asset.toLowerCase().includes(a.id.toLowerCase())
+          );
 
-        // Block alerts on closed markets
-        if (matchedAsset?.category) {
-          const mkt = isMarketOpen(matchedAsset.category as AssetCategory);
-          if (!mkt.isOpen) continue;
+          if (matchedAsset?.category) {
+            const mkt = isMarketOpen(matchedAsset.category as AssetCategory);
+            if (!mkt.isOpen) continue;
+          }
+
+          const alert: Alert = {
+            id: crypto.randomUUID?.() ?? `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+            asset: signal.asset,
+            symbol: matchedAsset?.symbol ?? signal.asset,
+            type: (signal.type as "BUY" | "SELL" | "WATCH") ?? "WATCH",
+            message: signal.message,
+            severity: signal.severity === "high" ? "HIGH" : signal.severity === "medium" ? "MEDIUM" : "LOW",
+            price: matchedAsset?.price ?? 0,
+            entry: matchedAsset?.tradePlan?.entry,
+            stopLoss: matchedAsset?.tradePlan?.stopLoss,
+            target1: matchedAsset?.tradePlan?.target1,
+            generatedAt: signal.generatedAt ?? new Date().toISOString(),
+            dismissedAt: null,
+            read: false,
+            category: (matchedAsset?.category as AssetCategory) ?? undefined,
+            indicatorsSnapshot: signal.indicatorsSnapshot,
+          };
+
+          toAdd.push(alert);
+          if (alert.severity === "HIGH") newCritical = alert;
         }
 
-        const alert: Alert = {
-          id: crypto.randomUUID?.() ?? `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
-          asset: signal.asset,
-          symbol: matchedAsset?.symbol ?? signal.asset,
-          type: (signal.type as "BUY" | "SELL" | "WATCH") ?? "WATCH",
-          message: signal.message,
-          severity: signal.severity === "high" ? "HIGH" : signal.severity === "medium" ? "MEDIUM" : "LOW",
-          price: matchedAsset?.price ?? 0,
-          entry: matchedAsset?.tradePlan?.entry,
-          stopLoss: matchedAsset?.tradePlan?.stopLoss,
-          target1: matchedAsset?.tradePlan?.target1,
-          generatedAt: signal.generatedAt ?? new Date().toISOString(),
-          dismissedAt: null,
-          read: false,
-          category: (matchedAsset?.category as AssetCategory) ?? undefined,
-        };
-
-        newAlerts.push(alert);
-
-        // Set as critical banner if HIGH
-        if (alert.severity === "HIGH") {
-          setLatestCritical(alert);
-        }
-      }
-
-      if (newAlerts.length > 0) {
-        setAlerts((prev) => [...newAlerts, ...prev].slice(0, MAX_ALERTS));
-      }
+        if (newCritical) setLatestCritical(newCritical);
+        if (toAdd.length === 0) return prev;
+        return [...toAdd, ...prev].slice(0, MAX_ALERTS);
+      });
     },
-    [alerts]
+    [] // stable — no stale closure
   );
 
   const dismissBanner = useCallback(() => {
@@ -169,6 +176,12 @@ export function useAlerts() {
     );
   }, []);
 
+  const updateValidation = useCallback((alertId: string, validation: AlertValidation) => {
+    setAlerts((prev) =>
+      prev.map((a) => a.id === alertId ? { ...a, validation } : a)
+    );
+  }, []);
+
   const unreadCount = alerts.filter((a) => !a.read && getFreshness(a.generatedAt) !== "EXPIRED").length;
   const activeAlerts = alerts.filter((a) => {
     if (getFreshness(a.generatedAt) === "EXPIRED") return false;
@@ -184,5 +197,6 @@ export function useAlerts() {
     dismissBanner,
     markAllRead,
     clearExpired,
+    updateValidation,
   };
 }

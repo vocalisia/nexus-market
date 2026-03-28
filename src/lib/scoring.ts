@@ -1,6 +1,8 @@
 import type { AssetCategory, AIDirection, Signal } from "@/types/market";
 import { calculateRSI, calculateADX, calculateStochRSI } from "./indicators";
 import { isMarketOpen } from "./marketHours";
+import { DEFAULT_WEIGHTS } from "./memoryEngine";
+import type { IndicatorWeights } from "./memoryEngine";
 
 // --- Category-specific scoring configs ---
 
@@ -59,28 +61,26 @@ export function computeAIScore(
   category: AssetCategory,
   sentiment = 50,
   adx = 0,
-  stochRsiK = 50
+  stochRsiK = 50,
+  weights: IndicatorWeights = DEFAULT_WEIGHTS,
 ): number {
   const cfg = SCORING_CONFIGS[category];
 
-  const rsiScore = rsi;
+  const rsiScore = rsi * weights.rsi;
   const ch24 = normalize(change24h, cfg.change24hRange[0], cfg.change24hRange[1]);
   const ch7d = normalize(change7d, cfg.change7dRange[0], cfg.change7dRange[1]);
+  const sentimentWeighted = sentiment * weights.polymarket;
 
   const baseScore =
     rsiScore * cfg.rsiWeight +
     ch24 * cfg.change24hWeight +
     ch7d * cfg.change7dWeight +
-    sentiment * cfg.sentimentWeight;
+    sentimentWeighted * cfg.sentimentWeight;
 
-  // ADX modifier
-  const adxMod = adx > 25 ? 5 : adx > 0 ? -10 : 0;
-  // StochRSI modifier
-  const stochMod = stochRsiK < 20 ? 8 : stochRsiK > 80 ? -8 : 0;
+  const adxMod = (adx > 25 ? 5 : adx > 0 ? -10 : 0) * weights.adx;
+  const stochMod = (stochRsiK < 20 ? 8 : stochRsiK > 80 ? -8 : 0) * weights.stochRsi;
 
-  const score = baseScore + adxMod + stochMod;
-
-  return Math.round(Math.min(100, Math.max(0, score)));
+  return Math.round(Math.min(100, Math.max(0, baseScore + adxMod + stochMod)));
 }
 
 export function getDirection(score: number): AIDirection {

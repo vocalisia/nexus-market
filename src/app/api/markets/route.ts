@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import type { Asset, Signal } from "@/types/market";
-import { calculateRSI } from "@/lib/indicators";
+import { calculateRSI, calculateADX, calculateStochRSI, computeAllIndicators } from "@/lib/indicators";
+import type { SignalIndicatorsSnapshot } from "@/types/market";
 import { computeAIScore, getDirection, generateSignal } from "@/lib/scoring";
 import { correlatePolymarket, computePolymarketSentiment } from "@/lib/correlation";
 import { computeMacroContext, getMacroAdjustment } from "@/lib/macroCorrelation";
@@ -139,14 +140,39 @@ export async function GET() {
         a.change24h, a.change7d,
         adjustedScore, adjustedDirection, a.category, a.sparkline
       );
-      if (signal) signals.push(signal);
+
+      if (signal) {
+        // Build indicators snapshot for auto-validation
+        const ind = computeAllIndicators(a.sparkline);
+        const adxVal = calculateADX(a.sparkline, a.sparkline, a.sparkline) ?? 0;
+        const stoch = calculateStochRSI(a.sparkline);
+        const snapshot: SignalIndicatorsSnapshot = {
+          rsi,
+          adx: adxVal,
+          stochRsiK: stoch?.k ?? 50,
+          macdCross: ind.macd.cross,
+          bollingerPos: ind.bollinger.position,
+          obvRising: ind.obv.rising,
+          regime: regime.regime,
+          fearGreed: fearGreed.value,
+          aiScore: adjustedScore,
+        };
+        signals.push({ ...signal, indicatorsSnapshot: snapshot });
+      }
+
+      // Force tradePlan direction to match the signal to avoid SL/TP inversion
+      const signalForce: "LONG" | "SHORT" | undefined =
+        signal?.type === "BUY" ? "LONG" :
+        signal?.type === "SELL" ? "SHORT" :
+        undefined;
 
       return {
         ...a,
         tradePlan: buildTradePlan(
           a.sparkline, rsi,
           a.change24h, a.change7d,
-          a.aiScore, a.category
+          adjustedScore, a.category,
+          signalForce,
         ),
       };
     });

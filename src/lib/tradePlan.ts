@@ -24,6 +24,7 @@ export function buildTradePlan(
   change7d: number,
   aiScore: number,
   category: AssetCategory,
+  forceDirection?: "LONG" | "SHORT",
 ): TradePlan {
   const price = prices[prices.length - 1] ?? 0;
 
@@ -130,7 +131,12 @@ export function buildTradePlan(
   let direction: "LONG" | "SHORT" | "WAIT";
   let reasons: string[];
 
-  if (longScore >= MIN_SCORE && longScore > shortScore) {
+  if (forceDirection) {
+    // Force direction to match the signal (avoids SL/TP inversion)
+    direction = forceDirection;
+    reasons   = forceDirection === "LONG" ? longReasons : shortReasons;
+    if (reasons.length === 0) reasons = [forceDirection === "LONG" ? "Signal BUY" : "Signal SELL"];
+  } else if (longScore >= MIN_SCORE && longScore > shortScore) {
     direction = "LONG";
     reasons   = longReasons;
   } else if (shortScore >= MIN_SCORE && shortScore > longScore) {

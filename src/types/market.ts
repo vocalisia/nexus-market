@@ -58,12 +58,25 @@ export interface PolymarketEntry {
   correlatedAssets: string[];
 }
 
+export interface SignalIndicatorsSnapshot {
+  rsi: number;
+  adx: number;
+  stochRsiK: number;
+  macdCross: "BULLISH" | "BEARISH" | "NONE";
+  bollingerPos: "ABOVE" | "INSIDE" | "BELOW";
+  obvRising: boolean;
+  regime: "BULL" | "BEAR" | "RANGING" | "TRANSITION";
+  fearGreed: number;
+  aiScore: number;
+}
+
 export interface Signal {
   asset: string;
   type: string;
   message: string;
   severity: "high" | "medium" | "low";
   generatedAt: string; // ISO timestamp
+  indicatorsSnapshot?: SignalIndicatorsSnapshot;
 }
 
 export interface Alert {
