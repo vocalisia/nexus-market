@@ -566,7 +566,7 @@ export default function PredictionDashboard() {
         <div style={{ maxWidth: 1600, margin: "0 auto", padding: "18px 24px", display: "flex", flexDirection: "column", gap: 14 }}>
 
           {/* ── ASSET CARDS ── */}
-          <div style={{ display: "flex", gap: 8, overflowX: "auto", paddingBottom: 4 }}>
+          <div style={{ display: "flex", gap: 8, overflowX: "auto", flexWrap: "nowrap", paddingBottom: 8, scrollbarWidth: "thin", WebkitOverflowScrolling: "touch" }}>
             {filteredAssets.map((asset) => {
               const isSelected = asset.id === selectedAssetId;
               const mktStatus = isMarketOpen(asset.category);
