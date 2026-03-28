@@ -1,8 +1,9 @@
 "use client";
-
 import { useState, useEffect, useCallback } from "react";
 
-interface CryptoAsset {
+// ─── Types ───────────────────────────────────────────────────
+
+interface Asset {
   id: string;
   name: string;
   symbol: string;
@@ -15,6 +16,7 @@ interface CryptoAsset {
   sparkline: number[];
   aiScore: number;
   aiDirection: "UP" | "DOWN" | "NEUTRAL";
+  category: "CRYPTO" | "FOREX" | "STOCKS" | "COMMODITIES";
 }
 
 interface Signal {
@@ -33,7 +35,10 @@ interface PolymarketData {
 }
 
 interface MarketData {
-  crypto: CryptoAsset[];
+  crypto: Asset[];
+  stocks: Asset[];
+  forex: Asset[];
+  commodities: Asset[];
   polymarket: PolymarketData[];
   signals: Signal[];
   lastUpdated: string;
@@ -41,12 +46,11 @@ interface MarketData {
 
 type FilterCategory = "ALL" | "CRYPTO" | "FOREX" | "STOCKS" | "COMMODITIES";
 
+// ─── Formatters ──────────────────────────────────────────────
+
 function formatPrice(price: number): string {
-  if (price >= 1000) {
-    return "$" + price.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
-  } else if (price >= 1) {
-    return "$" + price.toFixed(4);
-  }
+  if (price >= 1000) return "$" + price.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+  if (price >= 1) return "$" + price.toFixed(4);
   return "$" + price.toFixed(6);
 }
 
@@ -58,91 +62,110 @@ function formatVolume(value: number): string {
 }
 
 function formatChange(change: number): string {
-  const sign = change >= 0 ? "+" : "";
-  return sign + change.toFixed(2) + "%";
+  return (change >= 0 ? "+" : "") + change.toFixed(2) + "%";
 }
 
 function getScoreColor(score: number): string {
-  if (score > 55) return "#00c087";
-  if (score < 45) return "#f6465d";
-  return "#f0b90b";
-}
-
-function getScoreArrow(direction: "UP" | "DOWN" | "NEUTRAL"): string {
-  if (direction === "UP") return "\u2191";
-  if (direction === "DOWN") return "\u2193";
-  return "\u2192";
+  if (score > 55) return "#34D399";
+  if (score < 45) return "#FB7185";
+  return "#F59E0B";
 }
 
 function getChangeColor(change: number): string {
-  return change >= 0 ? "#00c087" : "#f6465d";
-}
-
-function getSeverityIcon(severity: "high" | "medium" | "low"): string {
-  if (severity === "high") return "\uD83D\uDD34";
-  if (severity === "medium") return "\uD83D\uDFE1";
-  return "\uD83D\uDFE2";
+  return change >= 0 ? "#34D399" : "#FB7185";
 }
 
 function formatTimestamp(ts: string): string {
   try {
     return new Date(ts).toLocaleTimeString("fr-FR", { hour: "2-digit", minute: "2-digit", second: "2-digit" });
-  } catch {
-    return ts;
-  }
+  } catch { return ts; }
 }
 
-function SparklineChart({ data, width, height, color }: { data: number[]; width: number; height: number; color: string }) {
+// ─── Chart Components ────────────────────────────────────────
+
+function SparklineChart({ data, color }: { data: number[]; color: string }) {
   if (data.length < 2) return null;
+  const W = 800, H = 200, P = 8;
   const min = Math.min(...data);
   const max = Math.max(...data);
   const range = max - min || 1;
-  const padding = 2;
-  const chartW = width - padding * 2;
-  const chartH = height - padding * 2;
+  const cW = W - P * 2;
+  const cH = H - P * 2;
 
-  const points = data.map((v, i) => {
-    const x = padding + (i / (data.length - 1)) * chartW;
-    const y = padding + chartH - ((v - min) / range) * chartH;
-    return `${x},${y}`;
-  });
+  const pts = data.map((v, i): [number, number] => [
+    P + (i / (data.length - 1)) * cW,
+    P + cH - ((v - min) / range) * cH,
+  ]);
 
-  const areaPoints = [...points, `${padding + chartW},${padding + chartH}`, `${padding},${padding + chartH}`];
+  const line = pts.map(([x, y]) => `${x},${y}`).join(" ");
+  const area = [...pts.map(([x, y]) => `${x},${y}`), `${W - P},${H - P}`, `${P},${H - P}`].join(" ");
+  const last = pts[pts.length - 1];
+  const gridYs = [0.25, 0.5, 0.75].map((p) => P + cH * (1 - p));
 
   return (
-    <svg width={width} height={height} viewBox={`0 0 ${width} ${height}`}>
+    <svg width="100%" height="100%" viewBox={`0 0 ${W} ${H}`} preserveAspectRatio="none">
       <defs>
-        <linearGradient id={`grad-${color.replace("#", "")}`} x1="0" y1="0" x2="0" y2="1">
-          <stop offset="0%" stopColor={color} stopOpacity={0.3} />
-          <stop offset="100%" stopColor={color} stopOpacity={0} />
+        <filter id="glow-line">
+          <feGaussianBlur stdDeviation="2.5" result="blur" />
+          <feMerge>
+            <feMergeNode in="blur" />
+            <feMergeNode in="SourceGraphic" />
+          </feMerge>
+        </filter>
+        <linearGradient id="area-fill" x1="0" y1="0" x2="0" y2="1">
+          <stop offset="0%" stopColor={color} stopOpacity="0.28" />
+          <stop offset="85%" stopColor={color} stopOpacity="0" />
         </linearGradient>
       </defs>
-      <polygon points={areaPoints.join(" ")} fill={`url(#grad-${color.replace("#", "")})`} />
-      <polyline points={points.join(" ")} fill="none" stroke={color} strokeWidth={2} strokeLinejoin="round" />
+
+      {/* Grid lines */}
+      {gridYs.map((y, i) => (
+        <line key={i} x1={P} y1={y} x2={W - P} y2={y}
+          stroke="#1C2338" strokeWidth="1" strokeDasharray="4 6" />
+      ))}
+
+      {/* Area fill */}
+      <polygon points={area} fill="url(#area-fill)" />
+
+      {/* Main line */}
+      <polyline points={line} fill="none" stroke={color} strokeWidth="2.5"
+        strokeLinejoin="round" filter="url(#glow-line)" />
+
+      {/* End dot */}
+      <circle cx={last[0]} cy={last[1]} r="5" fill={color} filter="url(#glow-line)" />
+      <circle cx={last[0]} cy={last[1]} r="9" fill={color} fillOpacity="0.15" />
     </svg>
   );
 }
 
-function MiniSparkline({ data, color }: { data: number[]; color: string }) {
+function CardSparkline({ data, color }: { data: number[]; color: string }) {
   if (data.length < 2) return null;
-  const sampled = data.filter((_, i) => i % 4 === 0);
+  const sampled = data.filter((_, i) => i % 5 === 0);
   const min = Math.min(...sampled);
   const max = Math.max(...sampled);
   const range = max - min || 1;
-  const points = sampled.map((v, i) => {
-    const x = (i / (sampled.length - 1)) * 60;
-    const y = 20 - ((v - min) / range) * 18;
+  const pts = sampled.map((v, i) => {
+    const x = (i / (sampled.length - 1)) * 180;
+    const y = 24 - ((v - min) / range) * 22;
     return `${x},${y}`;
   });
   return (
-    <svg width={60} height={22} viewBox="0 0 60 22">
-      <polyline points={points.join(" ")} fill="none" stroke={color} strokeWidth={1.5} strokeLinejoin="round" />
+    <svg width="100%" height="28" viewBox="0 0 180 28" preserveAspectRatio="none">
+      <polyline points={pts.join(" ")} fill="none"
+        stroke={color} strokeWidth="1.5" strokeLinejoin="round" opacity="0.7" />
     </svg>
   );
 }
 
-const ACTIVE_FILTERS: FilterCategory[] = ["ALL", "CRYPTO"];
+// ─── Constants ───────────────────────────────────────────────
+
+const ACTIVE_FILTERS: FilterCategory[] = ["ALL", "CRYPTO", "FOREX", "STOCKS", "COMMODITIES"];
 const ALL_FILTERS: FilterCategory[] = ["ALL", "CRYPTO", "FOREX", "STOCKS", "COMMODITIES"];
+
+const R = "var(--font-rajdhani), sans-serif";  // Rajdhani
+const M = "var(--font-jetbrains), monospace";   // JetBrains Mono
+
+// ─── Dashboard ───────────────────────────────────────────────
 
 export default function PredictionDashboard() {
   const [marketData, setMarketData] = useState<MarketData | null>(null);
@@ -156,10 +179,16 @@ export default function PredictionDashboard() {
       const res = await fetch("/api/markets");
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
       const data: MarketData = await res.json();
+      if (!data.stocks) data.stocks = [];
+      if (!data.forex) data.forex = [];
+      if (!data.commodities) data.commodities = [];
       setMarketData(data);
       setError(null);
       setSelectedAssetId((prev) => {
-        if (!prev && data.crypto?.length > 0) return data.crypto[0].id;
+        if (!prev) {
+          const all = [...(data.crypto ?? []), ...(data.stocks ?? []), ...(data.forex ?? []), ...(data.commodities ?? [])];
+          return all.length > 0 ? all[0].id : null;
+        }
         return prev;
       });
     } catch (err: unknown) {
@@ -175,230 +204,388 @@ export default function PredictionDashboard() {
     return () => clearInterval(interval);
   }, [fetchData]);
 
-  const selectedAsset = marketData?.crypto?.find((a) => a.id === selectedAssetId) ?? marketData?.crypto?.[0] ?? null;
-  const isUptrend = selectedAsset ? selectedAsset.change7d >= 0 : true;
-  const strokeColor = isUptrend ? "#00c087" : "#f6465d";
+  const allAssets: Asset[] = marketData
+    ? [...(marketData.crypto ?? []), ...(marketData.stocks ?? []), ...(marketData.forex ?? []), ...(marketData.commodities ?? [])]
+    : [];
+
+  const filteredAssets = filter === "ALL"
+    ? allAssets
+    : allAssets.filter((a) => a.category === filter);
+
+  const selectedAsset =
+    allAssets.find((a) => a.id === selectedAssetId) ??
+    filteredAssets[0] ??
+    null;
+  const chartColor = selectedAsset
+    ? selectedAsset.change7d >= 0 ? "#34D399" : "#FB7185"
+    : "#34D399";
+
+  const tickerItems = allAssets.length > 0
+    ? [...allAssets, ...allAssets]
+    : [];
 
   return (
-    <div style={{ backgroundColor: "#0a0e17", minHeight: "100vh", fontFamily: "monospace" }} className="text-white">
-      {/* TOP BAR */}
-      <div style={{ backgroundColor: "#111827", borderBottom: "1px solid #2d3548" }} className="flex items-center justify-between px-6 py-3 flex-wrap gap-3">
-        <div className="flex items-center gap-2">
-          <span className="text-2xl">{"\uD83E\uDDE0"}</span>
-          <span style={{ color: "#00c087", letterSpacing: "0.15em" }} className="text-xl font-bold">AI PREDICT</span>
-        </div>
-        <div className="flex items-center gap-6">
-          <div className="flex items-center gap-2">
-            <span style={{ display: "inline-block", width: 10, height: 10, borderRadius: "50%", backgroundColor: "#00c087", boxShadow: "0 0 6px #00c087", animation: "livePulse 2s infinite" }} />
-            <span style={{ color: "#00c087", fontSize: 13, letterSpacing: "0.1em" }}>LIVE</span>
-          </div>
-          {marketData?.lastUpdated && (
-            <span style={{ color: "#4b5563", fontSize: 12 }}>MAJ: {formatTimestamp(marketData.lastUpdated)}</span>
-          )}
-        </div>
-        <div className="flex items-center gap-1">
-          {ALL_FILTERS.map((cat) => {
-            const isActive = ACTIVE_FILTERS.includes(cat);
-            const isSelected = filter === cat;
-            return (
-              <button key={cat} onClick={() => { if (isActive) setFilter(cat); }}
-                style={{
-                  backgroundColor: isSelected ? "#00c087" : "transparent",
-                  color: isSelected ? "#0a0e17" : isActive ? "#9ca3af" : "#374151",
-                  border: `1px solid ${isSelected ? "#00c087" : isActive ? "#2d3548" : "#1f2937"}`,
-                  fontSize: 11, padding: "4px 10px", borderRadius: 4,
-                  cursor: isActive ? "pointer" : "not-allowed",
-                  fontFamily: "monospace", fontWeight: isSelected ? 700 : 400,
-                  letterSpacing: "0.05em", transition: "all 0.2s",
-                }}
-              >{cat}</button>
-            );
-          })}
-        </div>
-      </div>
+    <div style={{ backgroundColor: "#05070D", minHeight: "100vh" }}>
 
-      {/* LOADING */}
+      {/* ═══════════════════════════════════════════════
+          HEADER
+      ═══════════════════════════════════════════════ */}
+      <header style={{ backgroundColor: "#080B14", borderBottom: "1px solid #1C2338", position: "sticky", top: 0, zIndex: 50 }}>
+        <div style={{ maxWidth: 1600, margin: "0 auto", padding: "0 24px", height: 54, display: "flex", alignItems: "center", justifyContent: "space-between", gap: 16 }}>
+
+          {/* Logo */}
+          <div style={{ display: "flex", alignItems: "center", gap: 10, flexShrink: 0 }}>
+            <svg width="22" height="22" viewBox="0 0 22 22" fill="none">
+              <polygon points="11,1 21,21 1,21" fill="#F59E0B" />
+              <polygon points="11,7 17,19 5,19" fill="#05070D" />
+            </svg>
+            <span style={{ fontFamily: R, fontWeight: 700, fontSize: 17, letterSpacing: "0.14em", color: "#F1F5F9" }}>
+              NEXUS <span style={{ color: "#F59E0B" }}>MARKET</span>
+            </span>
+          </div>
+
+          {/* Live + time */}
+          <div style={{ display: "flex", alignItems: "center", gap: 20 }}>
+            <div style={{ display: "flex", alignItems: "center", gap: 7 }}>
+              <div className="live-dot" style={{ width: 7, height: 7, borderRadius: "50%", backgroundColor: "#F59E0B", flexShrink: 0 }} />
+              <span style={{ fontFamily: R, fontWeight: 700, fontSize: 11, letterSpacing: "0.14em", color: "#F59E0B" }}>LIVE</span>
+            </div>
+            {marketData?.lastUpdated && (
+              <span style={{ fontFamily: M, color: "#475569", fontSize: 12 }}>
+                {formatTimestamp(marketData.lastUpdated)}
+              </span>
+            )}
+          </div>
+
+          {/* Filters */}
+          <div style={{ display: "flex", alignItems: "center", gap: 5 }}>
+            {ALL_FILTERS.map((cat) => {
+              const active = ACTIVE_FILTERS.includes(cat);
+              const selected = filter === cat;
+              return (
+                <button key={cat}
+                  onClick={() => { if (active) setFilter(cat); }}
+                  style={{
+                    fontFamily: R, fontWeight: 700, fontSize: 11,
+                    letterSpacing: "0.1em", padding: "4px 12px",
+                    border: `1px solid ${selected ? "#F59E0B" : active ? "#1C2338" : "#0D1020"}`,
+                    backgroundColor: selected ? "#F59E0B12" : "transparent",
+                    color: selected ? "#F59E0B" : active ? "#64748B" : "#1C2338",
+                    cursor: active ? "pointer" : "not-allowed",
+                    borderRadius: 1,
+                    transition: "all 0.15s",
+                  }}
+                >{cat}</button>
+              );
+            })}
+          </div>
+        </div>
+      </header>
+
+      {/* ═══════════════════════════════════════════════
+          TICKER TAPE
+      ═══════════════════════════════════════════════ */}
+      {tickerItems.length > 0 && (
+        <div className="ticker-wrap" style={{ backgroundColor: "#06080F", borderBottom: "1px solid #1C2338", height: 34, overflow: "hidden", display: "flex", alignItems: "center" }}>
+          <div style={{ display: "flex", alignItems: "center", padding: "0 14px", borderRight: "1px solid #1C2338", flexShrink: 0, height: "100%" }}>
+            <span style={{ fontFamily: R, fontSize: 10, letterSpacing: "0.15em", color: "#475569", fontWeight: 700 }}>CRYPTO</span>
+          </div>
+          <div style={{ flex: 1, overflow: "hidden" }}>
+            <div className="ticker-track" style={{ fontFamily: M, alignItems: "center", height: 34 }}>
+              {tickerItems.map((asset, i) => {
+                const up = asset.change24h >= 0;
+                return (
+                  <div key={i} style={{ display: "flex", alignItems: "center", gap: 8, padding: "0 22px", borderRight: "1px solid #1C2338", height: 34, flexShrink: 0 }}>
+                    <span style={{ fontSize: 10, fontWeight: 700, color: "#64748B", letterSpacing: "0.1em", fontFamily: R }}>{asset.symbol.toUpperCase()}</span>
+                    <span style={{ fontSize: 12, color: "#F1F5F9" }}>{formatPrice(asset.price)}</span>
+                    <span style={{ fontSize: 11, color: up ? "#34D399" : "#FB7185" }}>{formatChange(asset.change24h)}</span>
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ═══════════════════════════════════════════════
+          LOADING
+      ═══════════════════════════════════════════════ */}
       {loading && (
-        <div className="flex items-center justify-center py-24">
-          <div style={{ color: "#00c087", fontSize: 14, letterSpacing: "0.1em" }}>CHARGEMENT DES DONNEES...</div>
+        <div style={{ display: "flex", alignItems: "center", justifyContent: "center", paddingTop: 120 }}>
+          <div style={{ fontFamily: M, color: "#F59E0B", fontSize: 13, letterSpacing: "0.15em" }}>
+            LOADING MARKET DATA<span className="cursor-blink">_</span>
+          </div>
         </div>
       )}
 
       {/* ERROR */}
       {error && (
-        <div className="flex items-center justify-center py-6">
-          <div style={{ backgroundColor: "#1a0a0f", border: "1px solid #f6465d", color: "#f6465d", fontSize: 13, padding: "10px 20px", borderRadius: 6 }}>
-            ERREUR: {error}
+        <div style={{ display: "flex", justifyContent: "center", padding: 24 }}>
+          <div style={{ fontFamily: M, backgroundColor: "#120508", border: "1px solid #FB718560", color: "#FB7185", fontSize: 12, padding: "10px 20px", letterSpacing: "0.05em" }}>
+            ▲ ERROR: {error}
           </div>
         </div>
       )}
 
+      {/* ═══════════════════════════════════════════════
+          MAIN CONTENT
+      ═══════════════════════════════════════════════ */}
       {!loading && marketData && (
-        <div className="px-4 py-4 space-y-4">
-          {/* ASSET CARDS ROW */}
-          <div style={{ overflowX: "auto", paddingBottom: 6 }} className="flex gap-3">
-            {marketData.crypto.map((asset) => {
+        <div style={{ maxWidth: 1600, margin: "0 auto", padding: "18px 24px", display: "flex", flexDirection: "column", gap: 14 }}>
+
+          {/* ── ASSET CARDS ── */}
+          <div style={{ display: "flex", gap: 8, overflowX: "auto", paddingBottom: 4 }}>
+            {filteredAssets.map((asset) => {
               const isSelected = asset.id === selectedAssetId;
-              const scoreColor = getScoreColor(asset.aiScore);
               const changeColor = getChangeColor(asset.change24h);
+              const scoreColor = getScoreColor(asset.aiScore);
+              const dir = asset.aiDirection;
               return (
-                <button key={asset.id} onClick={() => setSelectedAssetId(asset.id)}
+                <button key={asset.id}
+                  onClick={() => setSelectedAssetId(asset.id)}
                   style={{
-                    minWidth: 180, backgroundColor: isSelected ? "#1e2a3a" : "#1a1f2e",
-                    border: `1px solid ${isSelected ? "#00c087" : "#2d3548"}`,
-                    borderRadius: 8, padding: "12px 14px", textAlign: "left", cursor: "pointer",
-                    flexShrink: 0, transition: "all 0.2s",
-                    boxShadow: isSelected ? "0 0 12px rgba(0,192,135,0.15)" : "none",
+                    minWidth: 165,
+                    flexShrink: 0,
+                    backgroundColor: isSelected ? "#0F1424" : "#0A0D18",
+                    border: `1px solid ${isSelected ? "#F59E0B30" : "#1C2338"}`,
+                    borderLeft: `3px solid ${isSelected ? "#F59E0B" : "#1C2338"}`,
+                    padding: "12px 14px 0",
+                    textAlign: "left",
+                    cursor: "pointer",
+                    transition: "all 0.18s",
+                    boxShadow: isSelected ? "inset 0 0 40px #F59E0B06" : "none",
                   }}
                 >
-                  <div className="flex items-center justify-between mb-1">
-                    <span style={{ color: "#e5e7eb", fontWeight: 700, fontSize: 15, letterSpacing: "0.05em", textTransform: "uppercase" }}>{asset.symbol}</span>
-                    <MiniSparkline data={asset.sparkline} color={changeColor} />
-                  </div>
-                  <div style={{ color: "#f9fafb", fontSize: 16, fontWeight: 700, marginBottom: 4 }}>{formatPrice(asset.price)}</div>
-                  <div className="flex items-center justify-between">
-                    <span style={{ color: changeColor, fontSize: 12 }}>{formatChange(asset.change24h)}</span>
-                    <span style={{ color: scoreColor, fontSize: 11, fontWeight: 700, border: `1px solid ${scoreColor}`, borderRadius: 4, padding: "2px 6px" }}>
-                      IA: {asset.aiScore}% {getScoreArrow(asset.aiDirection)}
+                  {/* Symbol + direction */}
+                  <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 5 }}>
+                    <span style={{ fontFamily: R, fontWeight: 700, fontSize: 14, color: "#F1F5F9", letterSpacing: "0.1em" }}>
+                      {asset.symbol.toUpperCase()}
                     </span>
+                    <span style={{ fontSize: 13, color: scoreColor, fontFamily: M }}>
+                      {dir === "UP" ? "↑" : dir === "DOWN" ? "↓" : "→"}
+                    </span>
+                  </div>
+
+                  {/* Price */}
+                  <div style={{ fontFamily: M, fontWeight: 700, fontSize: 16, color: "#F1F5F9", marginBottom: 6, letterSpacing: "-0.02em" }}>
+                    {formatPrice(asset.price)}
+                  </div>
+
+                  {/* Change + Score */}
+                  <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 10 }}>
+                    <span style={{ fontFamily: M, fontSize: 12, color: changeColor }}>
+                      {formatChange(asset.change24h)}
+                    </span>
+                    <span style={{ fontFamily: R, fontWeight: 700, fontSize: 11, color: scoreColor, border: `1px solid ${scoreColor}40`, padding: "1px 5px", letterSpacing: "0.05em" }}>
+                      {asset.aiScore}
+                    </span>
+                  </div>
+
+                  {/* Mini sparkline flush to card bottom */}
+                  <div style={{ marginLeft: -14, marginRight: -14 }}>
+                    <CardSparkline data={asset.sparkline} color={changeColor} />
                   </div>
                 </button>
               );
             })}
           </div>
 
-          {/* MAIN CHART AREA */}
+          {/* ── MAIN GRID: Chart + Stats ── */}
           {selectedAsset && (
-            <div style={{ backgroundColor: "#1a1f2e", border: "1px solid #2d3548", borderRadius: 8, padding: "20px 24px" }}>
-              <div className="flex items-center justify-between mb-4 flex-wrap gap-3">
-                <div className="flex items-center gap-4">
-                  <span style={{ color: "#f9fafb", fontSize: 18, fontWeight: 700, letterSpacing: "0.05em", textTransform: "uppercase" }}>{selectedAsset.symbol} &mdash; 7D</span>
-                  <span style={{ color: "#9ca3af", fontSize: 13 }}>{selectedAsset.name}</span>
+            <div className="main-grid" style={{ display: "grid", gridTemplateColumns: "1fr 290px", gap: 14 }}>
+
+              {/* CHART PANEL */}
+              <div style={{ backgroundColor: "#0A0D18", border: "1px solid #1C2338" }}>
+
+                {/* Chart header */}
+                <div style={{ padding: "12px 20px", borderBottom: "1px solid #1C2338", display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                  <div style={{ display: "flex", alignItems: "baseline", gap: 12 }}>
+                    <span style={{ fontFamily: R, fontWeight: 700, fontSize: 16, letterSpacing: "0.1em", color: "#F1F5F9" }}>
+                      {selectedAsset.symbol.toUpperCase()} / USD
+                    </span>
+                    <span style={{ fontFamily: R, fontSize: 11, color: "#475569", letterSpacing: "0.1em" }}>
+                      {selectedAsset.name.toUpperCase()}
+                    </span>
+                  </div>
+                  <span style={{ fontFamily: R, fontWeight: 700, fontSize: 10, color: "#475569", letterSpacing: "0.15em", border: "1px solid #1C2338", padding: "3px 9px" }}>
+                    7 DAYS
+                  </span>
                 </div>
-                <div className="flex items-center gap-6 flex-wrap">
-                  <div>
-                    <div style={{ color: "#4b5563", fontSize: 10 }}>PRIX</div>
-                    <div style={{ color: "#f9fafb", fontSize: 16, fontWeight: 700 }}>{formatPrice(selectedAsset.price)}</div>
-                  </div>
-                  <div>
-                    <div style={{ color: "#4b5563", fontSize: 10 }}>7J</div>
-                    <div style={{ color: getChangeColor(selectedAsset.change7d), fontSize: 14, fontWeight: 600 }}>{formatChange(selectedAsset.change7d)}</div>
-                  </div>
-                  <div>
-                    <div style={{ color: "#4b5563", fontSize: 10 }}>VOLUME</div>
-                    <div style={{ color: "#9ca3af", fontSize: 13 }}>{formatVolume(selectedAsset.volume)}</div>
-                  </div>
-                  <div>
-                    <div style={{ color: "#4b5563", fontSize: 10 }}>CAP. MARCHE</div>
-                    <div style={{ color: "#9ca3af", fontSize: 13 }}>{formatVolume(selectedAsset.marketCap)}</div>
-                  </div>
-                  <div style={{ backgroundColor: "#0a0e17", border: `1px solid ${getScoreColor(selectedAsset.aiScore)}`, borderRadius: 6, padding: "6px 14px" }}>
-                    <div style={{ color: "#4b5563", fontSize: 10 }}>SCORE IA</div>
-                    <div style={{ color: getScoreColor(selectedAsset.aiScore), fontSize: 18, fontWeight: 700 }}>
-                      {selectedAsset.aiScore}% {getScoreArrow(selectedAsset.aiDirection)}
+
+                {/* Chart area */}
+                <div style={{ position: "relative", height: 260, padding: "16px 20px 12px", overflow: "hidden" }}>
+                  <div className="scan-line" />
+                  {selectedAsset.sparkline?.length > 0 ? (
+                    <SparklineChart data={selectedAsset.sparkline} color={chartColor} />
+                  ) : (
+                    <div style={{ height: "100%", display: "flex", alignItems: "center", justifyContent: "center", fontFamily: M, color: "#1C2338", fontSize: 12, letterSpacing: "0.15em" }}>
+                      NO SPARKLINE DATA
                     </div>
-                  </div>
+                  )}
                 </div>
               </div>
 
-              {/* SVG Chart */}
-              {selectedAsset.sparkline?.length > 0 ? (
-                <div style={{ width: "100%", height: 220, overflow: "hidden" }}>
-                  <SparklineChart data={selectedAsset.sparkline} width={900} height={220} color={strokeColor} />
+              {/* STATS PANEL */}
+              <div style={{ backgroundColor: "#0A0D18", border: "1px solid #1C2338", padding: "20px" }}>
+
+                {/* Name */}
+                <div style={{ fontFamily: R, fontSize: 10, color: "#475569", letterSpacing: "0.18em", marginBottom: 4 }}>
+                  {selectedAsset.name.toUpperCase()}
                 </div>
-              ) : (
-                <div style={{ height: 220, display: "flex", alignItems: "center", justifyContent: "center", color: "#374151", fontSize: 13 }}>
-                  Donnees sparkline non disponibles
+
+                {/* Big price */}
+                <div style={{ fontFamily: M, fontWeight: 700, fontSize: 30, color: "#F1F5F9", letterSpacing: "-0.03em", lineHeight: 1.05, marginBottom: 10 }}>
+                  {formatPrice(selectedAsset.price)}
                 </div>
-              )}
+
+                {/* 24h badge */}
+                <div style={{
+                  display: "inline-flex", alignItems: "center", gap: 6,
+                  backgroundColor: selectedAsset.change24h >= 0 ? "#34D39912" : "#FB718512",
+                  border: `1px solid ${selectedAsset.change24h >= 0 ? "#34D39930" : "#FB718530"}`,
+                  padding: "4px 10px", marginBottom: 18,
+                }}>
+                  <span style={{ fontFamily: M, fontWeight: 700, fontSize: 13, color: getChangeColor(selectedAsset.change24h) }}>
+                    {formatChange(selectedAsset.change24h)}
+                  </span>
+                  <span style={{ fontFamily: R, fontSize: 10, color: "#475569", letterSpacing: "0.1em" }}>24H</span>
+                </div>
+
+                <div style={{ height: 1, backgroundColor: "#1C2338", marginBottom: 16 }} />
+
+                {/* Change grid 1h/24h/7d */}
+                <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 10, marginBottom: 16 }}>
+                  {([["1H", selectedAsset.change1h], ["24H", selectedAsset.change24h], ["7D", selectedAsset.change7d]] as [string, number][]).map(([label, value]) => (
+                    <div key={label} style={{ textAlign: "center" }}>
+                      <div style={{ fontFamily: R, fontSize: 10, color: "#475569", letterSpacing: "0.12em", marginBottom: 3 }}>{label}</div>
+                      <div style={{ fontFamily: M, fontWeight: 700, fontSize: 12, color: getChangeColor(value) }}>{formatChange(value)}</div>
+                    </div>
+                  ))}
+                </div>
+
+                {/* Volume + MCap */}
+                <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10, marginBottom: 20 }}>
+                  {([["VOLUME", formatVolume(selectedAsset.volume)], ["MCAP", formatVolume(selectedAsset.marketCap)]] as [string, string][]).map(([label, value]) => (
+                    <div key={label}>
+                      <div style={{ fontFamily: R, fontSize: 10, color: "#475569", letterSpacing: "0.12em", marginBottom: 3 }}>{label}</div>
+                      <div style={{ fontFamily: M, fontSize: 12, color: "#94A3B8" }}>{value}</div>
+                    </div>
+                  ))}
+                </div>
+
+                <div style={{ height: 1, backgroundColor: "#1C2338", marginBottom: 16 }} />
+
+                {/* AI Score block */}
+                <div>
+                  <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 10 }}>
+                    <span style={{ fontFamily: R, fontWeight: 700, fontSize: 11, color: "#A78BFA", letterSpacing: "0.14em" }}>◈ AI SCORE</span>
+                    <span style={{ fontFamily: R, fontSize: 10, letterSpacing: "0.1em", color: "#A78BFA50" }}>
+                      {selectedAsset.aiDirection === "UP" ? "↑ BULLISH" : selectedAsset.aiDirection === "DOWN" ? "↓ BEARISH" : "→ NEUTRAL"}
+                    </span>
+                  </div>
+                  <div style={{ display: "flex", alignItems: "baseline", gap: 4, marginBottom: 10 }}>
+                    <span style={{ fontFamily: M, fontWeight: 700, fontSize: 34, color: getScoreColor(selectedAsset.aiScore), letterSpacing: "-0.03em" }}>
+                      {selectedAsset.aiScore}
+                    </span>
+                    <span style={{ fontFamily: R, fontSize: 14, color: "#475569" }}>/100</span>
+                  </div>
+                  {/* Bar track */}
+                  <div style={{ height: 3, backgroundColor: "#1C2338", overflow: "hidden" }}>
+                    <div className="score-bar-fill" style={{ height: "100%", width: `${selectedAsset.aiScore}%`, backgroundColor: getScoreColor(selectedAsset.aiScore) }} />
+                  </div>
+                </div>
+              </div>
             </div>
           )}
 
-          {/* BOTTOM SECTION */}
-          <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
-            {/* SIGNAUX IA */}
-            <div style={{ backgroundColor: "#1a1f2e", border: "1px solid #2d3548", borderRadius: 8, padding: "18px 20px" }}>
-              <div className="flex items-center gap-2 mb-4">
-                <span style={{ color: "#00c087", fontSize: 13, fontWeight: 700, letterSpacing: "0.1em" }}>{"\u25B6"} SIGNAUX IA</span>
-                <span style={{ backgroundColor: "#00c087", color: "#0a0e17", fontSize: 10, fontWeight: 700, padding: "1px 6px", borderRadius: 10 }}>{marketData.signals.length}</span>
+          {/* ── BOTTOM GRID: Signals + Polymarket ── */}
+          <div className="bottom-grid" style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 14 }}>
+
+            {/* AI SIGNALS */}
+            <div style={{ backgroundColor: "#0A0D18", border: "1px solid #1C2338" }}>
+              <div style={{ padding: "12px 18px", borderBottom: "1px solid #1C2338", display: "flex", alignItems: "center", gap: 10 }}>
+                <span style={{ fontFamily: R, fontWeight: 700, fontSize: 13, letterSpacing: "0.12em", color: "#A78BFA" }}>▶ AI SIGNALS</span>
+                <span style={{ fontFamily: M, fontSize: 10, fontWeight: 700, color: "#A78BFA", backgroundColor: "#A78BFA15", border: "1px solid #A78BFA30", padding: "1px 7px" }}>
+                  {marketData.signals.length}
+                </span>
               </div>
-              <div className="space-y-3">
+              <div style={{ padding: "12px", display: "flex", flexDirection: "column", gap: 8, maxHeight: 340, overflowY: "auto" }}>
                 {marketData.signals.length === 0 ? (
-                  <div style={{ color: "#374151", fontSize: 13, textAlign: "center", padding: "20px 0" }}>Aucun signal actif</div>
-                ) : (
-                  marketData.signals.map((signal, i) => (
-                    <div key={i} style={{ backgroundColor: "#0a0e17", border: "1px solid #2d3548", borderRadius: 6, padding: "10px 14px", display: "flex", gap: 10, alignItems: "flex-start" }}>
-                      <span style={{ fontSize: 14, flexShrink: 0, marginTop: 1 }}>{getSeverityIcon(signal.severity)}</span>
-                      <div style={{ flex: 1, minWidth: 0 }}>
-                        <div className="flex items-center justify-between gap-2 mb-1">
-                          <span style={{ color: "#e5e7eb", fontWeight: 700, fontSize: 13 }}>{signal.asset}</span>
-                          <span style={{ color: "#4b5563", fontSize: 10, backgroundColor: "#111827", padding: "1px 6px", borderRadius: 4, flexShrink: 0 }}>{signal.type}</span>
-                        </div>
-                        <div style={{ color: "#9ca3af", fontSize: 12, lineHeight: 1.5 }}>{signal.message}</div>
+                  <div style={{ fontFamily: M, color: "#1C2338", fontSize: 12, textAlign: "center", padding: "28px 0", letterSpacing: "0.1em" }}>
+                    NO ACTIVE SIGNALS
+                  </div>
+                ) : marketData.signals.map((signal, i) => {
+                  const sevColor = signal.severity === "high" ? "#FB7185" : signal.severity === "medium" ? "#F59E0B" : "#34D399";
+                  const typeColor = signal.type === "BUY" ? "#34D399" : signal.type === "SELL" ? "#FB7185" : "#F59E0B";
+                  return (
+                    <div key={i} style={{ backgroundColor: "#06080F", border: "1px solid #1C2338", borderLeft: `3px solid ${sevColor}`, padding: "10px 12px" }}>
+                      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 8, marginBottom: 4 }}>
+                        <span style={{ fontFamily: R, fontWeight: 700, fontSize: 13, color: "#F1F5F9" }}>{signal.asset}</span>
+                        <span style={{ fontFamily: R, fontWeight: 700, fontSize: 11, color: typeColor, border: `1px solid ${typeColor}40`, padding: "1px 7px", letterSpacing: "0.1em", flexShrink: 0 }}>
+                          {signal.type}
+                        </span>
                       </div>
+                      <div style={{ fontFamily: M, color: "#475569", fontSize: 11, lineHeight: 1.55 }}>{signal.message}</div>
                     </div>
-                  ))
-                )}
+                  );
+                })}
               </div>
             </div>
 
-            {/* POLYMARKET SENTIMENT */}
-            <div style={{ backgroundColor: "#1a1f2e", border: "1px solid #2d3548", borderRadius: 8, padding: "18px 20px" }}>
-              <div className="flex items-center gap-2 mb-4">
-                <span style={{ color: "#f0b90b", fontSize: 13, fontWeight: 700, letterSpacing: "0.1em" }}>{"\u25B6"} POLYMARKET SENTIMENT</span>
-                <span style={{ backgroundColor: "#f0b90b", color: "#0a0e17", fontSize: 10, fontWeight: 700, padding: "1px 6px", borderRadius: 10 }}>{marketData.polymarket.length}</span>
+            {/* POLYMARKET */}
+            <div style={{ backgroundColor: "#0A0D18", border: "1px solid #1C2338" }}>
+              <div style={{ padding: "12px 18px", borderBottom: "1px solid #1C2338", display: "flex", alignItems: "center", gap: 10 }}>
+                <span style={{ fontFamily: R, fontWeight: 700, fontSize: 13, letterSpacing: "0.12em", color: "#F59E0B" }}>▶ POLYMARKET ODDS</span>
+                <span style={{ fontFamily: M, fontSize: 10, fontWeight: 700, color: "#F59E0B", backgroundColor: "#F59E0B15", border: "1px solid #F59E0B30", padding: "1px 7px" }}>
+                  {marketData.polymarket.length}
+                </span>
               </div>
-              <div className="space-y-3" style={{ maxHeight: 400, overflowY: "auto" }}>
+              <div style={{ padding: "12px", display: "flex", flexDirection: "column", gap: 8, maxHeight: 340, overflowY: "auto" }}>
                 {marketData.polymarket.length === 0 ? (
-                  <div style={{ color: "#374151", fontSize: 13, textAlign: "center", padding: "20px 0" }}>Aucune donnee Polymarket</div>
-                ) : (
-                  marketData.polymarket.slice(0, 8).map((market, i) => {
-                    const yesPercent = market.bestBid > 0 ? Math.round(market.bestBid * 100) : 50;
-                    return (
-                      <div key={i} style={{ backgroundColor: "#0a0e17", border: "1px solid #2d3548", borderRadius: 6, padding: "12px 14px" }}>
-                        <div style={{ color: "#e5e7eb", fontSize: 12, marginBottom: 8, lineHeight: 1.5, fontFamily: "sans-serif" }}>{market.question}</div>
-                        <div style={{ height: 6, borderRadius: 3, backgroundColor: "#1f2937", overflow: "hidden", marginBottom: 8 }}>
-                          <div style={{ height: "100%", width: `${yesPercent}%`, backgroundColor: "#00c087", borderRadius: 3, transition: "width 0.5s ease" }} />
-                        </div>
-                        <div className="flex items-center justify-between">
-                          <div className="flex items-center gap-4">
-                            <div>
-                              <span style={{ color: "#4b5563", fontSize: 10 }}>OUI </span>
-                              <span style={{ color: "#00c087", fontSize: 12, fontWeight: 700 }}>{(market.bestBid * 100).toFixed(1)}c</span>
-                            </div>
-                            <div>
-                              <span style={{ color: "#4b5563", fontSize: 10 }}>NON </span>
-                              <span style={{ color: "#f6465d", fontSize: 12, fontWeight: 700 }}>{(market.bestAsk * 100).toFixed(1)}c</span>
-                            </div>
-                          </div>
-                          <div style={{ color: "#4b5563", fontSize: 11 }}>Vol: {formatVolume(market.volume)}</div>
-                        </div>
+                  <div style={{ fontFamily: M, color: "#1C2338", fontSize: 12, textAlign: "center", padding: "28px 0", letterSpacing: "0.1em" }}>
+                    NO POLYMARKET DATA
+                  </div>
+                ) : marketData.polymarket.slice(0, 8).map((market, i) => {
+                  const yes = market.bestBid > 0 ? Math.round(market.bestBid * 100) : 50;
+                  const no = 100 - yes;
+                  return (
+                    <div key={i} style={{ backgroundColor: "#06080F", border: "1px solid #1C2338", padding: "12px" }}>
+                      <div style={{ fontFamily: R, fontSize: 13, color: "#94A3B8", marginBottom: 10, lineHeight: 1.4 }}>
+                        {market.question}
                       </div>
-                    );
-                  })
-                )}
+                      {/* Dual bar */}
+                      <div style={{ height: 3, display: "flex", overflow: "hidden", marginBottom: 8 }}>
+                        <div style={{ width: `${yes}%`, height: "100%", backgroundColor: "#34D399", transition: "width 0.5s ease" }} />
+                        <div style={{ flex: 1, height: "100%", backgroundColor: "#FB7185" }} />
+                      </div>
+                      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                        <div style={{ display: "flex", gap: 16 }}>
+                          <div>
+                            <span style={{ fontFamily: R, fontSize: 10, color: "#475569", letterSpacing: "0.1em" }}>YES </span>
+                            <span style={{ fontFamily: M, fontSize: 12, fontWeight: 700, color: "#34D399" }}>{yes}%</span>
+                          </div>
+                          <div>
+                            <span style={{ fontFamily: R, fontSize: 10, color: "#475569", letterSpacing: "0.1em" }}>NO </span>
+                            <span style={{ fontFamily: M, fontSize: 12, fontWeight: 700, color: "#FB7185" }}>{no}%</span>
+                          </div>
+                        </div>
+                        <span style={{ fontFamily: M, color: "#475569", fontSize: 11 }}>{formatVolume(market.volume)}</span>
+                      </div>
+                    </div>
+                  );
+                })}
               </div>
             </div>
           </div>
 
           {/* DISCLAIMER */}
-          <div style={{ borderTop: "1px solid #1f2937", paddingTop: 16, textAlign: "center" }}>
-            <p style={{ color: "#374151", fontSize: 11, letterSpacing: "0.03em", fontFamily: "monospace" }}>
-              Ceci n&apos;est pas un conseil financier. Les predictions IA sont indicatives uniquement.
+          <div style={{ borderTop: "1px solid #1C2338", paddingTop: 14, textAlign: "center" }}>
+            <p style={{ fontFamily: M, color: "#1C2338", fontSize: 11, letterSpacing: "0.06em" }}>
+              THIS IS NOT FINANCIAL ADVICE — AI PREDICTIONS ARE INDICATIVE ONLY
             </p>
           </div>
         </div>
       )}
-
-      <style>{`
-        @keyframes livePulse {
-          0%, 100% { opacity: 1; }
-          50% { opacity: 0.35; }
-        }
-        ::-webkit-scrollbar { height: 4px; width: 4px; }
-        ::-webkit-scrollbar-track { background: #1a1f2e; }
-        ::-webkit-scrollbar-thumb { background: #2d3548; border-radius: 2px; }
-      `}</style>
     </div>
   );
 }

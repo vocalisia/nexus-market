@@ -1,20 +1,24 @@
 import type { Metadata } from "next";
-import { Geist, Geist_Mono } from "next/font/google";
+import { Rajdhani, JetBrains_Mono } from "next/font/google";
 import "./globals.css";
 
-const geistSans = Geist({
-  variable: "--font-geist-sans",
+const rajdhani = Rajdhani({
+  weight: ["400", "600", "700"],
+  variable: "--font-rajdhani",
   subsets: ["latin"],
+  display: "swap",
 });
 
-const geistMono = Geist_Mono({
-  variable: "--font-geist-mono",
+const jetbrainsMono = JetBrains_Mono({
+  weight: ["400", "500", "700"],
+  variable: "--font-jetbrains",
   subsets: ["latin"],
+  display: "swap",
 });
 
 export const metadata: Metadata = {
-  title: "AI Prediction Dashboard — Stocks, Forex, Crypto, Commodities",
-  description: "Dashboard de prédiction IA multi-assets avec données en temps réel et analyse par intelligence artificielle",
+  title: "NEXUS — AI Market Intelligence",
+  description: "Real-time AI prediction dashboard — crypto, signals, prediction markets",
 };
 
 export default function RootLayout({
@@ -25,9 +29,9 @@ export default function RootLayout({
   return (
     <html
       lang="fr"
-      className={`${geistSans.variable} ${geistMono.variable} h-full antialiased`}
+      className={`${rajdhani.variable} ${jetbrainsMono.variable} h-full antialiased`}
     >
-      <body className="min-h-full flex flex-col bg-[#0a0e17] text-[#e2e8f0]">
+      <body className="min-h-full flex flex-col" style={{ background: "#05070D", color: "#F1F5F9" }}>
         {children}
       </body>
     </html>
