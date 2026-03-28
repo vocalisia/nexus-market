@@ -17,6 +17,7 @@ export interface Alert {
   entry?: number;
   stopLoss?: number;
   target1?: number;
+  target2?: number;
   generatedAt: string;
   dismissedAt?: string | null;
   read: boolean;
@@ -108,7 +109,7 @@ export function useAlerts() {
   const processSignals = useCallback(
     (
       signals: Array<{ asset: string; type: string; message: string; severity: string; generatedAt?: string; indicatorsSnapshot?: AlertIndicatorsSnapshot }>,
-      assets: Array<{ id: string; symbol: string; price: number; category: string; tradePlan?: { entry?: number; stopLoss?: number; target1?: number } }>
+      assets: Array<{ id: string; symbol: string; price: number; category: string; tradePlan?: { entry?: number; stopLoss?: number; target1?: number; target2?: number } }>
     ) => {
       if (!initialized.current) return; // wait for localStorage load
       setAlerts((prev) => {
@@ -139,6 +140,7 @@ export function useAlerts() {
             entry: matchedAsset?.tradePlan?.entry,
             stopLoss: matchedAsset?.tradePlan?.stopLoss,
             target1: matchedAsset?.tradePlan?.target1,
+            target2: matchedAsset?.tradePlan?.target2,
             generatedAt: signal.generatedAt ?? new Date().toISOString(),
             dismissedAt: null,
             read: false,

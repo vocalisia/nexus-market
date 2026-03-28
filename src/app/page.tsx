@@ -566,8 +566,9 @@ export default function PredictionDashboard() {
                           {!isExpired && alert.entry && (
                             <div style={{ display: "flex", gap: 10, fontFamily: M, fontSize: 11 }}>
                               <span><span style={{ color: "#475569" }}>Entry </span><span style={{ color: "#94a3b8" }}>${alert.entry.toLocaleString()}</span></span>
-                              {alert.stopLoss && <span><span style={{ color: "#475569" }}>SL </span><span style={{ color: "#94a3b8" }}>${alert.stopLoss.toLocaleString()}</span></span>}
-                              {alert.target1 && <span><span style={{ color: "#475569" }}>T1 </span><span style={{ color: "#94a3b8" }}>${alert.target1.toLocaleString()}</span></span>}
+                              {alert.stopLoss && <span><span style={{ color: "#475569" }}>SL </span><span style={{ color: "#FB7185" }}>${alert.stopLoss.toLocaleString()}</span></span>}
+                              {alert.target1 && <span><span style={{ color: "#475569" }}>T1 </span><span style={{ color: "#34D399" }}>${alert.target1.toLocaleString()}</span></span>}
+                              {alert.target2 && <span><span style={{ color: "#475569" }}>T2 </span><span style={{ color: "#34D399" }}>${alert.target2.toLocaleString()}</span></span>}
                             </div>
                           )}
                           {!isExpired && alert.type !== "WATCH" && (
@@ -624,6 +625,7 @@ export default function PredictionDashboard() {
                 <span><span style={{ color: "#fca5a5" }}>Entry </span><b style={{ color: "#fff" }}>${latestCritical.entry.toLocaleString()}</b></span>
                 {latestCritical.stopLoss && <span><span style={{ color: "#fca5a5" }}>SL </span><b style={{ color: "#fff" }}>${latestCritical.stopLoss.toLocaleString()}</b></span>}
                 {latestCritical.target1 && <span><span style={{ color: "#fca5a5" }}>T1 </span><b style={{ color: "#fff" }}>${latestCritical.target1.toLocaleString()}</b></span>}
+                {latestCritical.target2 && <span><span style={{ color: "#fca5a5" }}>T2 </span><b style={{ color: "#fff" }}>${latestCritical.target2.toLocaleString()}</b></span>}
               </div>
             )}
           </div>
