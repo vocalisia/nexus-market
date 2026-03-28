@@ -292,10 +292,10 @@ export async function GET() {
 
         return {
           question: m.question ?? m.title ?? "Unknown",
-          volume: m.volume ?? 0,
-          liquidity: m.liquidity ?? 0,
-          bestBid,
-          bestAsk,
+          volume: Number(m.volume) || 0,
+          liquidity: Number(m.liquidity) || 0,
+          bestBid: Number(bestBid) || 0,
+          bestAsk: Number(bestAsk) || 0,
         };
       });
 
