@@ -161,6 +161,17 @@ export function generateSignal(
     }
   }
 
+  // AI Score override — Polymarket/macro can trigger signal even without technical extremes
+  if (parts.length === 0) {
+    if (score <= 38 && direction === "DOWN") {
+      parts.push(`AI bearish conviction ${score}/100`);
+      severity = score <= 32 ? "high" : "medium";
+    } else if (score >= 62 && direction === "UP") {
+      parts.push(`AI bullish conviction ${score}/100`);
+      severity = score >= 68 ? "high" : "medium";
+    }
+  }
+
   if (parts.length === 0) return null;
 
   // Upgrade to high when ADX is strong and RSI is at an extreme
