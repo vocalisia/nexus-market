@@ -284,6 +284,45 @@ export async function fetchTwelveForex(
 }
 
 // ============================================================
+// MULTI-TIMEFRAME (4H candles for confirmation)
+// ============================================================
+
+export async function fetchMultiTimeframe(
+  symbols: string[],
+  apiKey: string,
+): Promise<Record<string, number[]>> {
+  if (!apiKey || symbols.length === 0) return {};
+
+  const results: Record<string, number[]> = {};
+
+  // Limit to 4 symbols to conserve API quota
+  const limited = symbols.slice(0, 4);
+
+  const fetches = await Promise.allSettled(
+    limited.map(async (symbol) => {
+      const url = `https://api.twelvedata.com/time_series?symbol=${symbol}&interval=4h&outputsize=30&apikey=${apiKey}`;
+      const res = await fetch(url, { next: { revalidate: 600 } });
+      if (!res.ok) return null;
+      const data = await res.json();
+      if (!data.values?.length) return null;
+      const sparkline = data.values
+        .map((v: { close: string }) => parseFloat(v.close) || 0)
+        .filter((v: number) => v > 0)
+        .reverse();
+      return { symbol, sparkline };
+    })
+  );
+
+  for (const r of fetches) {
+    if (r.status === "fulfilled" && r.value) {
+      results[r.value.symbol] = r.value.sparkline;
+    }
+  }
+
+  return results;
+}
+
+// ============================================================
 // POLYMARKET PROVIDER (free, no API key)
 // ============================================================
 

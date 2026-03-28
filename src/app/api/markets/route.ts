@@ -6,6 +6,8 @@ import { correlatePolymarket, computePolymarketSentiment } from "@/lib/correlati
 import { computeMacroContext, getMacroAdjustment } from "@/lib/macroCorrelation";
 import { fetchCoinGecko, fetchCommodities, fetchTwelveForex, fetchPolymarket } from "@/lib/providers";
 import { buildTradePlan } from "@/lib/tradePlan";
+import { fetchFearGreed, fearGreedAdjustment } from "@/lib/fearGreed";
+import { detectRegime } from "@/lib/regimeDetection";
 
 export const revalidate = 60;
 
@@ -100,6 +102,7 @@ export async function GET() {
     // 1. Fetch Polymarket first (needed for sentiment correlation)
     const pmRaw = await fetchPolymarket().catch(() => []);
     const polymarket = correlatePolymarket(pmRaw);
+    const fearGreed = await fetchFearGreed();
 
     const sentiment = (assetId: string) => computePolymarketSentiment(assetId, polymarket);
 
@@ -126,7 +129,9 @@ export async function GET() {
     const assetsWithPlans: Asset[] = allAssets.map((a) => {
       const rsi = calculateRSI(a.sparkline);
       const { adjustment } = getMacroAdjustment(a.id, macroCtx);
-      const adjustedScore = Math.min(100, Math.max(0, a.aiScore + adjustment));
+      const regime = detectRegime(a.sparkline);
+      const fgAdj = a.category === "CRYPTO" ? fearGreedAdjustment(fearGreed.value) : 0;
+      const adjustedScore = Math.min(100, Math.max(0, a.aiScore + adjustment + regime.scoreModifier + fgAdj));
       const adjustedDirection = adjustedScore > 55 ? "UP" as const : adjustedScore < 45 ? "DOWN" as const : "NEUTRAL" as const;
 
       const signal = generateSignal(
@@ -147,7 +152,7 @@ export async function GET() {
     });
 
     return NextResponse.json(
-      { assets: assetsWithPlans, polymarket, signals, lastUpdated: new Date().toISOString(), demo: !TD_KEY },
+      { assets: assetsWithPlans, polymarket, signals, fearGreed, lastUpdated: new Date().toISOString(), demo: !TD_KEY },
       { status: 200, headers: { "Cache-Control": "public, s-maxage=60, stale-while-revalidate=30" } }
     );
   } catch (error: unknown) {
