@@ -9,6 +9,7 @@ import { useAlertValidation } from "@/hooks/useAlertValidation";
 import { useMemory } from "@/hooks/useMemory";
 import { AlertResultBadge } from "@/components/AlertResultBadge";
 import { PerformanceStats } from "@/components/PerformanceStats";
+import { TradeHistory } from "@/components/TradeHistory";
 
 // ─── Types ───────────────────────────────────────────────────
 
@@ -273,6 +274,7 @@ export default function PredictionDashboard() {
   // Alert system
   const { alerts, latestCritical, unreadCount, processSignals, dismissBanner, markAllRead, updateValidation } = useAlerts();
   const [showStatsPanel, setShowStatsPanel] = useState(false);
+  const [showHistoryPanel, setShowHistoryPanel] = useState(false);
   const { memory, resetMemory, winRateTrend } = useMemory();
   useAlertValidation({ alerts, onValidated: updateValidation });
 
@@ -449,9 +451,22 @@ export default function PredictionDashboard() {
             </div>
           )}
 
+          {/* HISTORIQUE button */}
+          <button
+            onClick={() => { setShowHistoryPanel(!showHistoryPanel); setShowStatsPanel(false); }}
+            style={{
+              fontFamily: "var(--font-rajdhani), sans-serif", fontWeight: 700, fontSize: 11,
+              letterSpacing: "0.1em", padding: "4px 12px",
+              border: `1px solid ${showHistoryPanel ? "#34D399" : "#1C2338"}`,
+              backgroundColor: showHistoryPanel ? "#34D39910" : "transparent",
+              color: showHistoryPanel ? "#34D399" : "#64748B",
+              cursor: "pointer", borderRadius: 1, transition: "all 0.15s",
+            }}
+          >HISTORIQUE</button>
+
           {/* STATS button */}
           <button
-            onClick={() => setShowStatsPanel(!showStatsPanel)}
+            onClick={() => { setShowStatsPanel(!showStatsPanel); setShowHistoryPanel(false); }}
             style={{
               fontFamily: "var(--font-rajdhani), sans-serif", fontWeight: 700, fontSize: 11,
               letterSpacing: "0.1em", padding: "4px 12px",
@@ -486,6 +501,26 @@ export default function PredictionDashboard() {
                 }}>{unreadCount}</span>
               )}
             </button>
+
+            {/* History Panel */}
+            {showHistoryPanel && (
+              <div style={{
+                position: "absolute", top: 48, right: 0, width: 520,
+                background: "#0A0D18", border: "1px solid #1C2338",
+                borderRadius: 8, boxShadow: "0 20px 60px rgba(0,0,0,0.8)",
+                zIndex: 100, overflow: "hidden", maxHeight: "80vh", overflowY: "auto",
+              }}>
+                <div style={{
+                  padding: "10px 14px", borderBottom: "1px solid #1C2338",
+                  display: "flex", alignItems: "center", justifyContent: "space-between",
+                  background: "#111827",
+                }}>
+                  <span style={{ fontFamily: R, fontWeight: 700, fontSize: 13, letterSpacing: "0.12em", color: "#34D399" }}>HISTORIQUE TRADES</span>
+                  <span style={{ fontFamily: M, fontSize: 10, color: "#475569" }}>{memory.history.length} validations</span>
+                </div>
+                <TradeHistory memory={memory} />
+              </div>
+            )}
 
             {/* Stats Panel */}
             {showStatsPanel && (
@@ -600,45 +635,57 @@ export default function PredictionDashboard() {
       {/* ═══════════════════════════════════════════════
           CRITICAL BANNER (persists until dismissed)
       ═══════════════════════════════════════════════ */}
-      {latestCritical && (
-        <div style={{
-          background: "linear-gradient(90deg, #7f1d1d, #dc2626)",
-          borderBottom: "1px solid #ef4444",
-          padding: "10px 20px",
-          display: "flex", alignItems: "center", justifyContent: "space-between",
-          animation: "pulse-banner 2s infinite",
-        }}>
-          <div style={{ display: "flex", alignItems: "center", gap: 12, flex: 1, flexWrap: "wrap" }}>
-            <span style={{
-              background: "#ef4444", border: "1px solid #fca5a5",
-              padding: "2px 8px", fontSize: 11, fontWeight: 700,
-              letterSpacing: "0.12em", borderRadius: 2, fontFamily: R,
-            }}>{"\uD83D\uDD34"} CRITIQUE</span>
-            <div>
-              <div style={{ fontSize: 16, fontWeight: 700, color: "#fff", fontFamily: R, letterSpacing: "0.06em" }}>
-                {latestCritical.asset} — {latestCritical.type}
+      {latestCritical && (() => {
+        const isBuy = latestCritical.type === "BUY";
+        const bannerBg = isBuy
+          ? "linear-gradient(90deg, #064e3b, #059669)"
+          : "linear-gradient(90deg, #7f1d1d, #dc2626)";
+        const bannerBorder = isBuy ? "#10b981" : "#ef4444";
+        const badgeBg = isBuy ? "#059669" : "#ef4444";
+        const badgeBorder = isBuy ? "#6ee7b7" : "#fca5a5";
+        const subColor = isBuy ? "#a7f3d0" : "#fca5a5";
+        const icon = isBuy ? "🟢" : "🔴";
+        const label = isBuy ? "ACHAT" : "VENTE";
+        return (
+          <div style={{
+            background: bannerBg,
+            borderBottom: `1px solid ${bannerBorder}`,
+            padding: "10px 20px",
+            display: "flex", alignItems: "center", justifyContent: "space-between",
+            animation: "pulse-banner 2s infinite",
+          }}>
+            <div style={{ display: "flex", alignItems: "center", gap: 12, flex: 1, flexWrap: "wrap" }}>
+              <span style={{
+                background: badgeBg, border: `1px solid ${badgeBorder}`,
+                padding: "2px 8px", fontSize: 11, fontWeight: 700,
+                letterSpacing: "0.12em", borderRadius: 2, fontFamily: R, color: "#fff",
+              }}>{icon} {label}</span>
+              <div>
+                <div style={{ fontSize: 16, fontWeight: 700, color: "#fff", fontFamily: R, letterSpacing: "0.06em" }}>
+                  {latestCritical.asset} — {latestCritical.type}
+                </div>
+                <div style={{ fontSize: 13, color: subColor, fontFamily: R }}>{latestCritical.message}</div>
               </div>
-              <div style={{ fontSize: 13, color: "#fca5a5", fontFamily: R }}>{latestCritical.message}</div>
+              {latestCritical.entry && (
+                <div style={{ display: "flex", gap: 16, fontSize: 12, fontFamily: M }}>
+                  <span><span style={{ color: subColor }}>Entry </span><b style={{ color: "#fff" }}>${latestCritical.entry.toLocaleString()}</b></span>
+                  {latestCritical.stopLoss && <span><span style={{ color: subColor }}>SL </span><b style={{ color: "#fff" }}>${latestCritical.stopLoss.toLocaleString()}</b></span>}
+                  {latestCritical.target1 && <span><span style={{ color: subColor }}>T1 </span><b style={{ color: "#fff" }}>${latestCritical.target1.toLocaleString()}</b></span>}
+                  {latestCritical.target2 && <span><span style={{ color: subColor }}>T2 </span><b style={{ color: "#fff" }}>${latestCritical.target2.toLocaleString()}</b></span>}
+                </div>
+              )}
             </div>
-            {latestCritical.entry && (
-              <div style={{ display: "flex", gap: 16, fontSize: 12, fontFamily: M }}>
-                <span><span style={{ color: "#fca5a5" }}>Entry </span><b style={{ color: "#fff" }}>${latestCritical.entry.toLocaleString()}</b></span>
-                {latestCritical.stopLoss && <span><span style={{ color: "#fca5a5" }}>SL </span><b style={{ color: "#fff" }}>${latestCritical.stopLoss.toLocaleString()}</b></span>}
-                {latestCritical.target1 && <span><span style={{ color: "#fca5a5" }}>T1 </span><b style={{ color: "#fff" }}>${latestCritical.target1.toLocaleString()}</b></span>}
-                {latestCritical.target2 && <span><span style={{ color: "#fca5a5" }}>T2 </span><b style={{ color: "#fff" }}>${latestCritical.target2.toLocaleString()}</b></span>}
-              </div>
-            )}
+            <div style={{ display: "flex", alignItems: "center", gap: 16, flexShrink: 0 }}>
+              <span style={{ fontSize: 11, color: subColor, fontFamily: M }}>{"\u23F1"} {getAgeText(latestCritical.generatedAt)}</span>
+              <button onClick={dismissBanner} style={{
+                background: "rgba(255,255,255,0.15)", border: "1px solid rgba(255,255,255,0.3)",
+                color: "#fff", cursor: "pointer", width: 24, height: 24,
+                borderRadius: 3, fontSize: 14, display: "flex", alignItems: "center", justifyContent: "center",
+              }}>{"\u2715"}</button>
+            </div>
           </div>
-          <div style={{ display: "flex", alignItems: "center", gap: 16, flexShrink: 0 }}>
-            <span style={{ fontSize: 11, color: "#fca5a5", fontFamily: M }}>{"\u23F1"} {getAgeText(latestCritical.generatedAt)}</span>
-            <button onClick={dismissBanner} style={{
-              background: "rgba(255,255,255,0.15)", border: "1px solid rgba(255,255,255,0.3)",
-              color: "#fff", cursor: "pointer", width: 24, height: 24,
-              borderRadius: 3, fontSize: 14, display: "flex", alignItems: "center", justifyContent: "center",
-            }}>{"\u2715"}</button>
-          </div>
-        </div>
-      )}
+        );
+      })()}
 
       {/* ═══════════════════════════════════════════════
           TICKER TAPE
