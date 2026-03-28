@@ -2,8 +2,8 @@ import { NextRequest, NextResponse } from "next/server";
 
 export const dynamic = "force-dynamic";
 
-// ─── Binance symbol map (crypto) ─────────────────────────────
-const BINANCE: Record<string, string> = {
+// ─── Symbol maps ──────────────────────────────────────────────
+const CRYPTO_SYM: Record<string, string> = {
   bitcoin: "BTCUSDT", ethereum: "ETHUSDT", solana: "SOLUSDT",
   ripple: "XRPUSDT", dogecoin: "DOGEUSDT", cardano: "ADAUSDT",
   polkadot: "DOTUSDT", "avalanche-2": "AVAXUSDT", chainlink: "LINKUSDT",
@@ -21,7 +21,11 @@ const TWELVE: Record<string, string> = {
   tsla: "TSLA", googl: "GOOGL", amzn: "AMZN", meta: "META",
 };
 
-// ─── Interval mapping ─────────────────────────────────────────
+// ─── Interval maps ────────────────────────────────────────────
+const BYBIT_INTERVAL: Record<string, string> = {
+  "5m": "5", "15m": "15", "30m": "30",
+  "1h": "60", "4h": "240", "1d": "D",
+};
 const BINANCE_INTERVAL: Record<string, string> = {
   "5m": "5m", "15m": "15m", "30m": "30m",
   "1h": "1h", "4h": "4h", "1d": "1d",
@@ -40,14 +44,39 @@ export interface Candle {
   volume: number;
 }
 
-// ─── Binance fetch ────────────────────────────────────────────
-async function fetchBinance(symbol: string, interval: string): Promise<Candle[]> {
-  const binSym = BINANCE[symbol];
-  const binInt = BINANCE_INTERVAL[interval] ?? "1h";
-  if (!binSym) throw new Error("Unknown symbol");
+// ─── Bybit fetch (primary for crypto) ────────────────────────
+async function fetchBybit(symbol: string, interval: string): Promise<Candle[]> {
+  const sym = CRYPTO_SYM[symbol];
+  const int = BYBIT_INTERVAL[interval] ?? "60";
+  if (!sym) throw new Error("Unknown symbol");
 
-  const url = `https://api.binance.com/api/v3/klines?symbol=${binSym}&interval=${binInt}&limit=120`;
-  const res = await fetch(url, { next: { revalidate: 30 } });
+  const url = `https://api.bybit.com/v5/market/kline?category=spot&symbol=${sym}&interval=${int}&limit=120`;
+  const res = await fetch(url);
+  if (!res.ok) throw new Error(`Bybit ${res.status}`);
+
+  interface BybitResp { retCode: number; result: { list: string[][] } }
+  const data = await res.json() as BybitResp;
+  if (data.retCode !== 0) throw new Error(`Bybit retCode ${data.retCode}`);
+
+  // Bybit returns newest-first → reverse for chronological order
+  return data.result.list.reverse().map(([t, o, h, l, c, v]) => ({
+    time: parseInt(t),
+    open: parseFloat(o),
+    high: parseFloat(h),
+    low: parseFloat(l),
+    close: parseFloat(c),
+    volume: parseFloat(v),
+  }));
+}
+
+// ─── Binance fetch (fallback for crypto) ─────────────────────
+async function fetchBinance(symbol: string, interval: string): Promise<Candle[]> {
+  const sym = CRYPTO_SYM[symbol];
+  const int = BINANCE_INTERVAL[interval] ?? "1h";
+  if (!sym) throw new Error("Unknown symbol");
+
+  const url = `https://api.binance.com/api/v3/klines?symbol=${sym}&interval=${int}&limit=120`;
+  const res = await fetch(url);
   if (!res.ok) throw new Error(`Binance ${res.status}`);
 
   const raw = (await res.json()) as [number, string, string, string, string, string][];
@@ -69,12 +98,12 @@ async function fetchTwelve(symbol: string, interval: string): Promise<Candle[]> 
   if (!tdSym || !key) throw new Error("Unknown symbol or no API key");
 
   const url = `https://api.twelvedata.com/time_series?symbol=${tdSym}&interval=${tdInt}&outputsize=120&apikey=${key}&format=JSON`;
-  const res = await fetch(url, { next: { revalidate: 60 } });
+  const res = await fetch(url);
   if (!res.ok) throw new Error(`TwelveData ${res.status}`);
 
   interface TDBar { datetime: string; open: string; high: string; low: string; close: string; volume?: string }
-  const data = await res.json() as { values?: TDBar[] };
-  if (!data.values) throw new Error("No data from TwelveData");
+  const data = await res.json() as { values?: TDBar[]; message?: string };
+  if (!data.values) throw new Error(data.message ?? "No data from TwelveData");
 
   return data.values.reverse().map((b) => ({
     time: new Date(b.datetime).getTime(),
@@ -96,7 +125,11 @@ export async function GET(req: NextRequest) {
   try {
     let candles: Candle[];
     if (category === "CRYPTO") {
-      candles = await fetchBinance(symbol, interval);
+      try {
+        candles = await fetchBybit(symbol, interval);
+      } catch {
+        candles = await fetchBinance(symbol, interval);
+      }
     } else {
       candles = await fetchTwelve(symbol, interval);
     }

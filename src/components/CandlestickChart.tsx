@@ -22,7 +22,7 @@ function formatTime(ts: number, tf: TF): string {
 }
 
 // ─── SVG Candlestick Chart ────────────────────────────────────
-function Chart({ candles, width, height }: { candles: Candle[]; width: number; height: number }) {
+function Chart({ candles, width, height, tf }: { candles: Candle[]; width: number; height: number; tf: TF }) {
   if (candles.length === 0) return null;
 
   const PAD_L = 60; // price axis
@@ -59,9 +59,6 @@ function Chart({ candles, width, height }: { candles: Candle[]; width: number; h
   // Current price (last close)
   const lastClose = candles[n - 1].close;
   const lastY = toY(lastClose);
-
-  // Visible candles for time frame context
-  const tf: TF = "1h"; // passed from parent but not available here — we use 1h as default
 
   return (
     <svg width={width} height={height} style={{ display: "block" }}>
@@ -255,7 +252,7 @@ export function CandlestickChart({
           </div>
         )}
         {!loading && !error && candles.length > 0 && (
-          <Chart candles={candles} width={dims.width} height={dims.height} />
+          <Chart candles={candles} width={dims.width} height={dims.height} tf={tf} />
         )}
       </div>
     </div>
