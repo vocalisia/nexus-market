@@ -1,5 +1,6 @@
 import type { Asset, AssetCategory } from "@/types/market";
-import { calculateRSI, computeAIScore, getDirection } from "./scoring";
+import { computeAIScore, getDirection } from "./scoring";
+import { calculateRSI } from "./indicators";
 
 // ============================================================
 // COINGECKO PROVIDER (crypto - no API key needed)
@@ -22,7 +23,7 @@ export async function fetchCoinGecko(sentiment: (id: string) => number): Promise
   const url =
     "https://api.coingecko.com/api/v3/coins/markets" +
     "?vs_currency=usd" +
-    "&ids=bitcoin,ethereum,solana,ripple,dogecoin,cardano" +
+    "&ids=bitcoin,ethereum,solana,ripple,dogecoin,cardano,polkadot,avalanche-2,chainlink,polygon,uniswap,litecoin,stellar,near,sui" +
     "&order=market_cap_desc" +
     "&sparkline=true" +
     "&price_change_percentage=1h,24h,7d";
@@ -76,14 +77,13 @@ interface ForexPairConfig {
   symbol: string;
   from: string;
   to: string;
-  invert: boolean; // true for EUR/USD (we want USD per 1 EUR)
 }
 
 const FOREX_PAIRS: ForexPairConfig[] = [
-  { id: "eur-usd", name: "Euro / Dollar", symbol: "EUR/USD", from: "EUR", to: "USD", invert: false },
-  { id: "gbp-usd", name: "Livre / Dollar", symbol: "GBP/USD", from: "GBP", to: "USD", invert: false },
-  { id: "usd-jpy", name: "Dollar / Yen", symbol: "USD/JPY", from: "USD", to: "JPY", invert: false },
-  { id: "usd-chf", name: "Dollar / Franc", symbol: "USD/CHF", from: "USD", to: "CHF", invert: false },
+  { id: "eur-usd", name: "Euro / Dollar", symbol: "EUR/USD", from: "EUR", to: "USD" },
+  { id: "gbp-usd", name: "Livre / Dollar", symbol: "GBP/USD", from: "GBP", to: "USD" },
+  { id: "usd-jpy", name: "Dollar / Yen", symbol: "USD/JPY", from: "USD", to: "JPY" },
+  { id: "usd-chf", name: "Dollar / Franc", symbol: "USD/CHF", from: "USD", to: "CHF" },
 ];
 
 function toDateStr(d: Date): string {
@@ -128,7 +128,7 @@ export async function fetchForex(sentiment: (id: string) => number): Promise<Ass
         rate = dayRates[pair.to] ?? 0;
       } else {
         const usdToTarget = dayRates[pair.from] ?? 1;
-        rate = pair.invert ? usdToTarget : 1 / usdToTarget;
+        rate = 1 / usdToTarget;
       }
       if (rate > 0) sparkline.push(rate);
     }
@@ -139,7 +139,7 @@ export async function fetchForex(sentiment: (id: string) => number): Promise<Ass
       price = latest.rates[pair.to] ?? sparkline[sparkline.length - 1] ?? 0;
     } else {
       const usdToFrom = latest.rates[pair.from] ?? 1;
-      price = pair.invert ? usdToFrom : 1 / usdToFrom;
+      price = 1 / usdToFrom;
     }
 
     const change1h = 0; // daily data, no hourly granularity
@@ -172,78 +172,91 @@ export async function fetchForex(sentiment: (id: string) => number): Promise<Ass
 }
 
 // ============================================================
-// COMMODITIES PROVIDER (simulated data, upgradeable with API key)
+// COMMODITIES PROVIDER (Alpha Vantage API)
 // ============================================================
 
-interface CommodityConfig {
+interface AVQuote {
+  "Global Quote": {
+    "01. symbol": string;
+    "05. price": string;
+    "09. change": string;
+    "10. change percent": string;
+  };
+}
+
+interface CommodityMeta {
   id: string;
   name: string;
   symbol: string;
-  basePrice: number;
-  volatility: number; // % daily volatility
+  avSymbol: string;
 }
 
-const COMMODITIES: CommodityConfig[] = [
-  { id: "xau-usd", name: "Or (Gold)", symbol: "XAU/USD", basePrice: 3050, volatility: 0.012 },
-  { id: "xag-usd", name: "Argent (Silver)", symbol: "XAG/USD", basePrice: 34, volatility: 0.018 },
-  { id: "wti-oil", name: "Petrole WTI", symbol: "WTI", basePrice: 68, volatility: 0.025 },
-  { id: "nat-gas", name: "Gaz Naturel", symbol: "NATGAS", basePrice: 3.80, volatility: 0.030 },
+const COMMODITY_META: CommodityMeta[] = [
+  { id: "xau-usd", name: "Or (Gold)", symbol: "XAU/USD", avSymbol: "GLD" },
+  { id: "xag-usd", name: "Argent (Silver)", symbol: "XAG/USD", avSymbol: "SLV" },
+  { id: "wti-oil", name: "Petrole WTI", symbol: "WTI", avSymbol: "USO" },
 ];
 
-// Deterministic pseudo-random based on seed
-function seededRandom(seed: number): number {
-  const x = Math.sin(seed * 12.9898 + 78.233) * 43758.5453;
-  return x - Math.floor(x);
-}
+export async function fetchCommodities(
+  apiKey: string,
+  sentiment: (id: string) => number,
+): Promise<Asset[]> {
+  if (!apiKey) return [];
 
-function generateCommoditySparkline(base: number, volatility: number): number[] {
-  const now = Date.now();
-  const hourMs = 3600_000;
-  const points: number[] = [];
-  let price = base;
+  const fetchQuote = (avSymbol: string): Promise<Response> =>
+    fetch(
+      `https://www.alphavantage.co/query?function=GLOBAL_QUOTE&symbol=${avSymbol}&apikey=${apiKey}`,
+      { next: { revalidate: 300 } },
+    );
 
-  // Generate 168 hourly points (7 days)
-  for (let i = 167; i >= 0; i--) {
-    const seed = Math.floor((now - i * hourMs) / hourMs);
-    const change = (seededRandom(seed) - 0.5) * 2 * volatility;
-    price = price * (1 + change);
-    points.push(price);
-  }
+  const results = await Promise.allSettled(
+    COMMODITY_META.map((c) => fetchQuote(c.avSymbol)),
+  );
 
-  return points;
-}
+  const assets: Asset[] = [];
 
-export function fetchCommodities(sentiment: (id: string) => number): Asset[] {
-  return COMMODITIES.map((c) => {
-    const sparkline = generateCommoditySparkline(c.basePrice, c.volatility);
-    const price = sparkline[sparkline.length - 1];
-    const price1h = sparkline[sparkline.length - 2] ?? price;
-    const price24h = sparkline[sparkline.length - 25] ?? sparkline[0];
-    const price7d = sparkline[0];
+  for (let i = 0; i < COMMODITY_META.length; i++) {
+    const meta = COMMODITY_META[i];
+    const result = results[i];
 
-    const change1h = ((price - price1h) / price1h) * 100;
-    const change24h = ((price - price24h) / price24h) * 100;
-    const change7d = ((price - price7d) / price7d) * 100;
+    if (result.status === "rejected" || !result.value.ok) continue;
 
-    const rsi = calculateRSI(sparkline);
-    const aiScore = computeAIScore(change24h, change7d, rsi, "COMMODITIES", sentiment(c.id));
+    let data: AVQuote;
+    try {
+      data = (await result.value.json()) as AVQuote;
+    } catch {
+      continue;
+    }
 
-    return {
-      id: c.id,
-      name: c.name,
-      symbol: c.symbol,
+    const quote = data["Global Quote"];
+    if (!quote || !quote["05. price"]) continue;
+
+    const price = parseFloat(quote["05. price"]) || 0;
+    const changePercent = parseFloat(
+      (quote["10. change percent"] ?? "0").replace("%", ""),
+    ) || 0;
+
+    const rsi = calculateRSI([]);
+    const aiScore = computeAIScore(changePercent, 0, rsi, "COMMODITIES", sentiment(meta.id));
+
+    assets.push({
+      id: meta.id,
+      name: meta.name,
+      symbol: meta.symbol,
       category: "COMMODITIES" as AssetCategory,
       price,
-      change1h,
-      change24h,
-      change7d,
+      change1h: 0,
+      change24h: changePercent,
+      change7d: 0,
       marketCap: 0,
       volume: 0,
-      sparkline,
+      sparkline: [],
       aiScore,
       aiDirection: getDirection(aiScore),
-    };
-  });
+    });
+  }
+
+  return assets;
 }
 
 // ============================================================

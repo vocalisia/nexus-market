@@ -312,7 +312,7 @@ export default function PredictionDashboard() {
       {tickerItems.length > 0 && (
         <div className="ticker-wrap" style={{ backgroundColor: "#06080F", borderBottom: "1px solid #1C2338", height: 34, overflow: "hidden", display: "flex", alignItems: "center" }}>
           <div style={{ display: "flex", alignItems: "center", padding: "0 14px", borderRight: "1px solid #1C2338", flexShrink: 0, height: "100%" }}>
-            <span style={{ fontFamily: R, fontSize: 10, letterSpacing: "0.15em", color: "#475569", fontWeight: 700 }}>CRYPTO</span>
+            <span style={{ fontFamily: R, fontSize: 10, letterSpacing: "0.15em", color: "#475569", fontWeight: 700 }}>MARKET TICKER</span>
           </div>
           <div style={{ flex: 1, overflow: "hidden" }}>
             <div className="ticker-track" style={{ fontFamily: M, alignItems: "center", height: 34 }}>

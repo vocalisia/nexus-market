@@ -1,29 +1,5 @@
 import type { AssetCategory, AIDirection, Signal } from "@/types/market";
-
-// --- RSI Calculation (Wilder's smoothed) ---
-
-export function calculateRSI(prices: number[], period = 14): number {
-  if (prices.length < period + 1) return 50;
-
-  const deltas = prices.slice(1).map((p, i) => p - prices[i]);
-  const gains = deltas.map((d) => (d > 0 ? d : 0));
-  const losses = deltas.map((d) => (d < 0 ? -d : 0));
-
-  let avgGain = gains.slice(0, period).reduce((a, b) => a + b, 0) / period;
-  let avgLoss = losses.slice(0, period).reduce((a, b) => a + b, 0) / period;
-
-  if (avgLoss === 0) return 100;
-
-  let rsi = 100 - 100 / (1 + avgGain / avgLoss);
-
-  for (let i = period; i < gains.length; i++) {
-    avgGain = (avgGain * (period - 1) + gains[i]) / period;
-    avgLoss = (avgLoss * (period - 1) + losses[i]) / period;
-    rsi = avgLoss === 0 ? 100 : 100 - 100 / (1 + avgGain / avgLoss);
-  }
-
-  return Math.round(rsi * 100) / 100;
-}
+import { calculateRSI } from "./indicators";
 
 // --- Category-specific scoring configs ---
 

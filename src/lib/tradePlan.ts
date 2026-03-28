@@ -142,10 +142,8 @@ export function buildTradePlan(
   }
 
   // ── Strategy label ───────────────────────────────────────────
-  const hasCross  = maBull !== (sma9 > sma21); // just true always — kept for readability
   const hasRSI    = rsiLow || rsiHigh;
   const hasBB     = nearLowerBB || nearUpperBB;
-  void hasCross;  // suppress unused warning
 
   let strategy: string;
   if (maBull && hasRSI) strategy = "MA Cross + RSI";
