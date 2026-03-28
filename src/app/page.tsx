@@ -10,6 +10,7 @@ import { useMemory } from "@/hooks/useMemory";
 import { AlertResultBadge } from "@/components/AlertResultBadge";
 import { PerformanceStats } from "@/components/PerformanceStats";
 import { TradeHistory } from "@/components/TradeHistory";
+import { CandlestickChart } from "@/components/CandlestickChart";
 
 // ─── Types ───────────────────────────────────────────────────
 
@@ -1217,14 +1218,12 @@ export default function PredictionDashboard() {
               }}>✕</button>
             </div>
 
-            {/* Chart */}
-            <div style={{ height: 300, padding: "20px 24px 12px", position: "relative" }}>
-              <div className="scan-line" />
-              {selectedAsset.sparkline?.length > 0
-                ? <SparklineChart data={selectedAsset.sparkline} color={chartColor} />
-                : <div style={{ height: "100%", display: "flex", alignItems: "center", justifyContent: "center", color: "#1C2338", fontFamily: M, fontSize: 12 }}>NO DATA</div>
-              }
-            </div>
+            {/* Candlestick Chart */}
+            <CandlestickChart
+              assetId={selectedAsset.id}
+              category={selectedAsset.category}
+              currentPrice={selectedAsset.price}
+            />
 
             {/* Stats row */}
             <div style={{
