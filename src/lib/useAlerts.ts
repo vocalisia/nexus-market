@@ -69,7 +69,7 @@ function isDuplicate(existing: Alert[], newAlert: { asset: string; type: string 
     (a) =>
       a.asset === newAlert.asset &&
       a.type === newAlert.type &&
-      Date.now() - new Date(a.generatedAt).getTime() < DEDUP_WINDOW_MS
+      Date.now() - new Date(a.generatedAt).getTime() < EXPIRE_MS // same asset+type within 60min = skip
   );
 }
 
