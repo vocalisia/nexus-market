@@ -336,39 +336,79 @@ interface PolymarketMarketRaw {
   outcomePrices?: string;
 }
 
-export async function fetchPolymarket(): Promise<
-  { question: string; volume: number; liquidity: number; bestBid: number; bestAsk: number }[]
-> {
-  const url =
-    "https://gamma-api.polymarket.com/markets?limit=20&active=true&closed=false&order=volume&ascending=false";
+// Detect if a Polymarket question is bullish, bearish, or neutral
+function detectMarketDirection(question: string): "BULL" | "BEAR" | "NEUTRAL" {
+  const q = question.toLowerCase();
+  const bearish = [
+    "drop below", "fall below", "crash", "below $", "under $",
+    "decline", "bear market", "correction", "dump", "sell off",
+    "not reach", "fail to reach", "miss", "collapse",
+  ];
+  const bullish = [
+    "reach", "hit $", "above $", "exceed", "over $", "break",
+    "surge", "bull", "all-time high", "ath", "rally", "pump",
+    "outperform", "rise above", "go above", "cross $",
+  ];
+  const isBear = bearish.some((p) => q.includes(p));
+  const isBull = bullish.some((p) => q.includes(p));
+  if (isBear && !isBull) return "BEAR";
+  if (isBull && !isBear) return "BULL";
+  return "NEUTRAL";
+}
 
-  const res = await fetch(url, { next: { revalidate: 60 } });
-  if (!res.ok) return [];
-
-  const raw = (await res.json()) as PolymarketMarketRaw[];
-
-  return raw.slice(0, 20).map((m) => {
-    let bestBid = m.bestBid ?? 0;
-    let bestAsk = m.bestAsk ?? 0;
-
-    if (!bestBid && !bestAsk && m.outcomePrices) {
-      try {
-        const prices: string[] = JSON.parse(m.outcomePrices);
-        if (prices.length >= 2) {
-          bestBid = parseFloat(prices[0]) || 0;
-          bestAsk = parseFloat(prices[1]) || 0;
-        }
-      } catch {
-        // ignore parse errors
+function parseMarket(m: PolymarketMarketRaw): {
+  question: string; volume: number; liquidity: number;
+  bestBid: number; bestAsk: number; direction: "BULL" | "BEAR" | "NEUTRAL";
+} {
+  let bestBid = m.bestBid ?? 0;
+  let bestAsk = m.bestAsk ?? 0;
+  if (!bestBid && !bestAsk && m.outcomePrices) {
+    try {
+      const prices: string[] = JSON.parse(m.outcomePrices);
+      if (prices.length >= 2) {
+        bestBid = parseFloat(prices[0]) || 0;
+        bestAsk = parseFloat(prices[1]) || 0;
       }
-    }
+    } catch { /* ignore */ }
+  }
+  const question = m.question ?? m.title ?? "Unknown";
+  return {
+    question,
+    volume: Number(m.volume) || 0,
+    liquidity: Number(m.liquidity) || 0,
+    bestBid: Number(bestBid) || 0,
+    bestAsk: Number(bestAsk) || 0,
+    direction: detectMarketDirection(question),
+  };
+}
 
-    return {
-      question: m.question ?? m.title ?? "Unknown",
-      volume: Number(m.volume) || 0,
-      liquidity: Number(m.liquidity) || 0,
-      bestBid: Number(bestBid) || 0,
-      bestAsk: Number(bestAsk) || 0,
-    };
-  });
+export async function fetchPolymarket(): Promise<
+  { question: string; volume: number; liquidity: number; bestBid: number; bestAsk: number; direction: "BULL" | "BEAR" | "NEUTRAL" }[]
+> {
+  const BASE = "https://gamma-api.polymarket.com/markets?active=true&closed=false&order=volume&ascending=false";
+
+  // Fetch top 50 general + top 30 crypto-tagged in parallel
+  const [generalRes, cryptoRes] = await Promise.allSettled([
+    fetch(`${BASE}&limit=50`, { next: { revalidate: 60 } }),
+    fetch(`${BASE}&limit=30&tag_slug=crypto`, { next: { revalidate: 60 } }),
+  ]);
+
+  const seen = new Set<string>();
+  const merged: ReturnType<typeof parseMarket>[] = [];
+
+  for (const result of [generalRes, cryptoRes]) {
+    if (result.status !== "fulfilled" || !result.value.ok) continue;
+    try {
+      const raw = (await result.value.json()) as PolymarketMarketRaw[];
+      for (const m of raw) {
+        const parsed = parseMarket(m);
+        if (!seen.has(parsed.question)) {
+          seen.add(parsed.question);
+          merged.push(parsed);
+        }
+      }
+    } catch { /* ignore parse errors */ }
+  }
+
+  return merged;
 }

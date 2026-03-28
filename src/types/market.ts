@@ -55,6 +55,7 @@ export interface PolymarketEntry {
   liquidity: number;
   bestBid: number;
   bestAsk: number;
+  direction: "BULL" | "BEAR" | "NEUTRAL"; // detected from question wording
   correlatedAssets: string[];
 }
 

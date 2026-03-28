@@ -1,6 +1,6 @@
 import type { PolymarketEntry } from "@/types/market";
 
-// --- Polymarket <-> Asset keyword correlation ---
+// ─── Asset ↔ Polymarket keyword rules ────────────────────────
 
 interface CorrelationRule {
   assetIds: string[];
@@ -8,28 +8,56 @@ interface CorrelationRule {
 }
 
 const CORRELATION_RULES: CorrelationRule[] = [
-  // Crypto
-  { assetIds: ["bitcoin"], keywords: ["bitcoin", "btc", "crypto"] },
-  { assetIds: ["ethereum"], keywords: ["ethereum", "eth"] },
-  { assetIds: ["solana"], keywords: ["solana", "sol"] },
-  { assetIds: ["ripple"], keywords: ["ripple", "xrp"] },
+  // ── Crypto ──────────────────────────────────────────────────
+  { assetIds: ["bitcoin"],         keywords: ["bitcoin", "btc", "satoshi"] },
+  { assetIds: ["ethereum"],        keywords: ["ethereum", "eth", "ether"] },
+  { assetIds: ["solana"],          keywords: ["solana", "sol"] },
+  { assetIds: ["ripple"],          keywords: ["ripple", "xrp"] },
+  { assetIds: ["dogecoin"],        keywords: ["dogecoin", "doge"] },
+  { assetIds: ["cardano"],         keywords: ["cardano", "ada"] },
+  { assetIds: ["polkadot"],        keywords: ["polkadot", "dot"] },
+  { assetIds: ["avalanche-2"],     keywords: ["avalanche", "avax"] },
+  { assetIds: ["chainlink"],       keywords: ["chainlink", "link"] },
+  { assetIds: ["polygon"],         keywords: ["polygon", "matic"] },
+  { assetIds: ["uniswap"],         keywords: ["uniswap", "uni"] },
+  { assetIds: ["litecoin"],        keywords: ["litecoin", "ltc"] },
+  { assetIds: ["stellar"],         keywords: ["stellar", "xlm"] },
+  { assetIds: ["near"],            keywords: ["near protocol", "near"] },
+  { assetIds: ["sui"],             keywords: [" sui "] },
 
-  // Forex - geopolitical
-  { assetIds: ["eur-usd", "gbp-usd"], keywords: ["eu", "european", "europe", "brexit", "ecb", "boe", "tariff"] },
-  { assetIds: ["usd-jpy"], keywords: ["japan", "boj", "yen", "japanese"] },
-  { assetIds: ["usd-chf"], keywords: ["switzerland", "swiss", "snb"] },
+  // Broad crypto (affects all crypto assets)
+  {
+    assetIds: ["bitcoin", "ethereum", "solana", "ripple", "dogecoin",
+               "cardano", "polkadot", "avalanche-2", "chainlink", "polygon",
+               "uniswap", "litecoin", "stellar", "near", "sui"],
+    keywords: ["crypto", "cryptocurrency", "blockchain", "defi", "nft",
+               "sec", "etf", "altcoin", "web3", "digital asset"],
+  },
 
-  // Commodities
-  { assetIds: ["xau-usd", "xag-usd"], keywords: ["gold", "silver", "precious", "inflation", "fed rate", "bullion"] },
-  { assetIds: ["wti-oil", "nat-gas"], keywords: ["oil", "opec", "crude", "energy", "natural gas", "pipeline", "petroleum"] },
+  // ── Forex — geopolitical ────────────────────────────────────
+  { assetIds: ["eur-usd", "gbp-usd"],  keywords: ["eu ", "europe", "european", "ecb", "boe", "brexit", "tariff", "nato"] },
+  { assetIds: ["usd-jpy"],             keywords: ["japan", "boj", "yen", "japanese"] },
+  { assetIds: ["usd-chf"],             keywords: ["switzerland", "swiss", "snb"] },
 
-  // Broad macro
-  { assetIds: ["xau-usd", "usd-chf"], keywords: ["recession", "war", "conflict", "sanctions", "safe haven"] },
-  { assetIds: ["eur-usd", "gbp-usd", "usd-jpy", "usd-chf"], keywords: ["dollar", "fed", "interest rate", "treasury", "fomc"] },
+  // Broad macro → all forex
+  {
+    assetIds: ["eur-usd", "gbp-usd", "usd-jpy", "usd-chf"],
+    keywords: ["dollar", "fed", "federal reserve", "interest rate", "treasury",
+               "fomc", "inflation", "recession", "rate hike", "rate cut"],
+  },
+
+  // ── Commodities ─────────────────────────────────────────────
+  { assetIds: ["xau-usd", "xag-usd"],  keywords: ["gold", "silver", "precious metal", "bullion"] },
+  { assetIds: ["wti-oil", "nat-gas"],  keywords: ["oil", "opec", "crude", "energy", "natural gas", "pipeline", "petroleum", "brent"] },
+
+  // Safe haven → gold + chf
+  { assetIds: ["xau-usd", "usd-chf"],  keywords: ["recession", "war", "conflict", "sanctions", "safe haven", "geopolit"] },
 ];
 
+// ─── Correlate markets to assets ─────────────────────────────
+
 export function correlatePolymarket(
-  markets: { question: string; volume: number; liquidity: number; bestBid: number; bestAsk: number }[]
+  markets: { question: string; volume: number; liquidity: number; bestBid: number; bestAsk: number; direction: "BULL" | "BEAR" | "NEUTRAL" }[]
 ): PolymarketEntry[] {
   return markets.map((m) => {
     const q = m.question.toLowerCase();
@@ -48,6 +76,11 @@ export function correlatePolymarket(
   });
 }
 
+// ─── Compute sentiment score (0–100) ─────────────────────────
+// BULL market: high bestBid → bullish (→ high score)
+// BEAR market: high bestBid → bearish (→ low score, inverted)
+// NEUTRAL: bestBid used as-is
+
 export function computePolymarketSentiment(
   assetId: string,
   polymarket: PolymarketEntry[]
@@ -55,13 +88,20 @@ export function computePolymarketSentiment(
   const correlated = polymarket.filter((p) => p.correlatedAssets.includes(assetId));
   if (correlated.length === 0) return 50; // neutral when no correlation
 
-  // Weighted average of bestBid (higher bid = more bullish sentiment)
   let totalWeight = 0;
   let weightedSum = 0;
 
   for (const p of correlated) {
     const weight = Math.max(1, Math.log10(p.volume + 1));
-    weightedSum += p.bestBid * 100 * weight;
+    // Probability of YES outcome (0–1 → 0–100)
+    const prob = p.bestBid * 100;
+    // Directional adjustment: bear market → invert probability
+    const score =
+      p.direction === "BEAR" ? 100 - prob :
+      p.direction === "BULL" ? prob :
+      prob; // NEUTRAL: treat as bullish proxy
+
+    weightedSum += score * weight;
     totalWeight += weight;
   }
 
