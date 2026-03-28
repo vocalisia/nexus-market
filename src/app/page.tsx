@@ -1,7 +1,8 @@
 "use client";
-import { useState, useEffect, useCallback, useMemo } from "react";
+import React, { useState, useEffect, useCallback, useMemo, useRef } from "react";
 import { computeAllIndicators, scoreIndicators, computeCombinedScore } from "@/lib/indicators";
 import type { IndicatorResult } from "@/lib/indicators";
+import { useBinanceWs } from "@/lib/useBinanceWs";
 
 // ─── Types ───────────────────────────────────────────────────
 
@@ -94,6 +95,33 @@ function formatTimestamp(ts: string): string {
   try {
     return new Date(ts).toLocaleTimeString("fr-FR", { hour: "2-digit", minute: "2-digit", second: "2-digit" });
   } catch { return ts; }
+}
+
+// ─── Flash Price Component ───────────────────────────────────
+
+function FlashPrice({ price, prevPrice, style }: { price: number; prevPrice?: number; style?: React.CSSProperties }) {
+  const [flash, setFlash] = useState<"up" | "down" | null>(null);
+  const prevRef = useRef(prevPrice ?? price);
+
+  useEffect(() => {
+    if (price > prevRef.current) setFlash("up");
+    else if (price < prevRef.current) setFlash("down");
+    prevRef.current = price;
+
+    const t = setTimeout(() => setFlash(null), 600);
+    return () => clearTimeout(t);
+  }, [price]);
+
+  return (
+    <span style={{
+      ...style,
+      transition: "color 0.3s",
+      color: flash === "up" ? "#34D399" : flash === "down" ? "#FB7185" : (style?.color ?? "#F1F5F9"),
+      textShadow: flash ? `0 0 8px ${flash === "up" ? "#34D39960" : "#FB718560"}` : "none",
+    }}>
+      {formatPrice(price)}
+    </span>
+  );
 }
 
 // ─── Chart Components ────────────────────────────────────────
@@ -215,7 +243,19 @@ export default function PredictionDashboard() {
     return () => clearInterval(interval);
   }, [fetchData]);
 
-  const allAssets: Asset[] = marketData?.assets ?? [];
+  // Live crypto prices via Binance WebSocket
+  const cryptoIds = useMemo(() => (marketData?.assets ?? []).filter((a) => a.category === "CRYPTO").map((a) => a.id), [marketData]);
+  const livePrices = useBinanceWs(cryptoIds);
+
+  // Merge live prices into assets
+  const allAssets: Asset[] = useMemo(() => {
+    const base = marketData?.assets ?? [];
+    return base.map((asset) => {
+      const live = livePrices[asset.id];
+      if (!live) return asset;
+      return { ...asset, price: live.price, change24h: live.change24h };
+    });
+  }, [marketData, livePrices]);
 
   const filteredAssets = filter === "ALL"
     ? allAssets
@@ -321,7 +361,7 @@ export default function PredictionDashboard() {
                 return (
                   <div key={i} style={{ display: "flex", alignItems: "center", gap: 8, padding: "0 22px", borderRight: "1px solid #1C2338", height: 34, flexShrink: 0 }}>
                     <span style={{ fontSize: 10, fontWeight: 700, color: "#64748B", letterSpacing: "0.1em", fontFamily: R }}>{asset.symbol.toUpperCase()}</span>
-                    <span style={{ fontSize: 12, color: "#F1F5F9" }}>{formatPrice(asset.price)}</span>
+                    <FlashPrice price={asset.price} prevPrice={livePrices[asset.id]?.prevPrice} style={{ fontSize: 12, color: "#F1F5F9" }} />
                     <span style={{ fontSize: 11, color: up ? "#34D399" : "#FB7185" }}>{formatChange(asset.change24h)}</span>
                   </div>
                 );
@@ -391,8 +431,8 @@ export default function PredictionDashboard() {
                   </div>
 
                   {/* Price */}
-                  <div style={{ fontFamily: M, fontWeight: 700, fontSize: 16, color: "#F1F5F9", marginBottom: 6, letterSpacing: "-0.02em" }}>
-                    {formatPrice(asset.price)}
+                  <div style={{ fontFamily: M, fontWeight: 700, fontSize: 16, marginBottom: 6, letterSpacing: "-0.02em" }}>
+                    <FlashPrice price={asset.price} prevPrice={livePrices[asset.id]?.prevPrice} style={{ color: "#F1F5F9", fontFamily: M, fontWeight: 700, fontSize: 16 }} />
                   </div>
 
                   {/* Change + Score */}
@@ -458,8 +498,8 @@ export default function PredictionDashboard() {
                 </div>
 
                 {/* Big price */}
-                <div style={{ fontFamily: M, fontWeight: 700, fontSize: 30, color: "#F1F5F9", letterSpacing: "-0.03em", lineHeight: 1.05, marginBottom: 10 }}>
-                  {formatPrice(selectedAsset.price)}
+                <div style={{ fontFamily: M, fontWeight: 700, fontSize: 30, letterSpacing: "-0.03em", lineHeight: 1.05, marginBottom: 10 }}>
+                  <FlashPrice price={selectedAsset.price} prevPrice={livePrices[selectedAsset.id]?.prevPrice} style={{ color: "#F1F5F9", fontFamily: M, fontWeight: 700, fontSize: 30 }} />
                 </div>
 
                 {/* 24h badge */}
