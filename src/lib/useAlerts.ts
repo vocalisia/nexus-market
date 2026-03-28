@@ -1,0 +1,174 @@
+"use client";
+import { useState, useEffect, useCallback, useRef } from "react";
+
+export interface Alert {
+  id: string;
+  asset: string;
+  symbol: string;
+  type: "BUY" | "SELL" | "WATCH";
+  message: string;
+  severity: "HIGH" | "MEDIUM" | "LOW";
+  price: number;
+  entry?: number;
+  stopLoss?: number;
+  target1?: number;
+  generatedAt: string;
+  dismissedAt?: string | null;
+  read: boolean;
+}
+
+export type Freshness = "FRESH" | "WARM" | "OLD" | "EXPIRED";
+
+const STORAGE_KEY = "nexus_alerts";
+const MAX_ALERTS = 100;
+const DEDUP_WINDOW_MS = 15 * 60 * 1000; // 15 min
+const EXPIRE_MS = 60 * 60 * 1000; // 60 min
+
+export function getFreshness(generatedAt: string): Freshness {
+  const age = Date.now() - new Date(generatedAt).getTime();
+  if (age < 15 * 60 * 1000) return "FRESH";   // 0-15 min
+  if (age < 30 * 60 * 1000) return "WARM";    // 15-30 min
+  if (age < 60 * 60 * 1000) return "OLD";     // 30-60 min
+  return "EXPIRED";                             // 60+ min
+}
+
+export function getAgeText(generatedAt: string): string {
+  const age = Date.now() - new Date(generatedAt).getTime();
+  const mins = Math.floor(age / 60000);
+  if (mins < 1) return "à l'instant";
+  if (mins < 60) return `il y a ${mins} min`;
+  const hours = Math.floor(mins / 60);
+  return `il y a ${hours}h${mins % 60 > 0 ? (mins % 60) + "min" : ""}`;
+}
+
+function loadAlerts(): Alert[] {
+  if (typeof window === "undefined") return [];
+  try {
+    const raw = localStorage.getItem(STORAGE_KEY);
+    if (!raw) return [];
+    return JSON.parse(raw) as Alert[];
+  } catch {
+    return [];
+  }
+}
+
+function saveAlerts(alerts: Alert[]): void {
+  if (typeof window === "undefined") return;
+  try {
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(alerts.slice(0, MAX_ALERTS)));
+  } catch {
+    // localStorage full or unavailable
+  }
+}
+
+function isDuplicate(existing: Alert[], newAlert: { asset: string; type: string }): boolean {
+  return existing.some(
+    (a) =>
+      a.asset === newAlert.asset &&
+      a.type === newAlert.type &&
+      Date.now() - new Date(a.generatedAt).getTime() < DEDUP_WINDOW_MS
+  );
+}
+
+export function useAlerts() {
+  const [alerts, setAlerts] = useState<Alert[]>([]);
+  const [latestCritical, setLatestCritical] = useState<Alert | null>(null);
+  const initialized = useRef(false);
+
+  // Load from localStorage on mount
+  useEffect(() => {
+    if (initialized.current) return;
+    initialized.current = true;
+    const stored = loadAlerts();
+    setAlerts(stored);
+    // Find latest undismissed critical
+    const critical = stored.find(
+      (a) => a.severity === "HIGH" && !a.dismissedAt && getFreshness(a.generatedAt) !== "EXPIRED"
+    );
+    if (critical) setLatestCritical(critical);
+  }, []);
+
+  // Persist on change
+  useEffect(() => {
+    if (!initialized.current) return;
+    saveAlerts(alerts);
+  }, [alerts]);
+
+  // Process new signals from API
+  const processSignals = useCallback(
+    (signals: Array<{ asset: string; type: string; message: string; severity: string; generatedAt?: string }>, assets: Array<{ id: string; symbol: string; price: number; category: string; tradePlan?: { entry?: number; stopLoss?: number; target1?: number } }>) => {
+      const newAlerts: Alert[] = [];
+
+      for (const signal of signals) {
+        if (isDuplicate(alerts, signal)) continue;
+
+        // Find matching asset for price/trade plan
+        const matchedAsset = assets.find((a) =>
+          signal.asset.toLowerCase().includes(a.symbol.toLowerCase()) ||
+          signal.asset.toLowerCase().includes(a.id.toLowerCase())
+        );
+
+        const alert: Alert = {
+          id: crypto.randomUUID?.() ?? `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+          asset: signal.asset,
+          symbol: matchedAsset?.symbol ?? signal.asset,
+          type: (signal.type as "BUY" | "SELL" | "WATCH") ?? "WATCH",
+          message: signal.message,
+          severity: signal.severity === "high" ? "HIGH" : signal.severity === "medium" ? "MEDIUM" : "LOW",
+          price: matchedAsset?.price ?? 0,
+          entry: matchedAsset?.tradePlan?.entry,
+          stopLoss: matchedAsset?.tradePlan?.stopLoss,
+          target1: matchedAsset?.tradePlan?.target1,
+          generatedAt: signal.generatedAt ?? new Date().toISOString(),
+          dismissedAt: null,
+          read: false,
+        };
+
+        newAlerts.push(alert);
+
+        // Set as critical banner if HIGH
+        if (alert.severity === "HIGH") {
+          setLatestCritical(alert);
+        }
+      }
+
+      if (newAlerts.length > 0) {
+        setAlerts((prev) => [...newAlerts, ...prev].slice(0, MAX_ALERTS));
+      }
+    },
+    [alerts]
+  );
+
+  const dismissBanner = useCallback(() => {
+    if (!latestCritical) return;
+    setAlerts((prev) =>
+      prev.map((a) =>
+        a.id === latestCritical.id ? { ...a, dismissedAt: new Date().toISOString() } : a
+      )
+    );
+    setLatestCritical(null);
+  }, [latestCritical]);
+
+  const markAllRead = useCallback(() => {
+    setAlerts((prev) => prev.map((a) => ({ ...a, read: true })));
+  }, []);
+
+  const clearExpired = useCallback(() => {
+    setAlerts((prev) =>
+      prev.filter((a) => Date.now() - new Date(a.generatedAt).getTime() < EXPIRE_MS)
+    );
+  }, []);
+
+  const unreadCount = alerts.filter((a) => !a.read && getFreshness(a.generatedAt) !== "EXPIRED").length;
+  const activeAlerts = alerts.filter((a) => !a.dismissedAt || getFreshness(a.generatedAt) !== "EXPIRED");
+
+  return {
+    alerts: activeAlerts,
+    latestCritical: latestCritical && !latestCritical.dismissedAt ? latestCritical : null,
+    unreadCount,
+    processSignals,
+    dismissBanner,
+    markAllRead,
+    clearExpired,
+  };
+}

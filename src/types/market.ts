@@ -59,11 +59,29 @@ export interface Signal {
   type: string;
   message: string;
   severity: "high" | "medium" | "low";
+  generatedAt: string; // ISO timestamp
+}
+
+export interface Alert {
+  id: string;
+  asset: string;
+  symbol: string;
+  type: "BUY" | "SELL" | "WATCH";
+  message: string;
+  severity: "HIGH" | "MEDIUM" | "LOW";
+  price: number;
+  entry?: number;
+  stopLoss?: number;
+  target1?: number;
+  generatedAt: string; // ISO timestamp
+  dismissedAt?: string | null;
+  category: AssetCategory;
 }
 
 export interface MarketData {
   assets: Asset[];
   polymarket: PolymarketEntry[];
   signals: Signal[];
+  alerts: Alert[];
   lastUpdated: string;
 }

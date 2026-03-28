@@ -172,91 +172,115 @@ export async function fetchForex(sentiment: (id: string) => number): Promise<Ass
 }
 
 // ============================================================
-// COMMODITIES PROVIDER (Alpha Vantage API)
+// TWELVE DATA PROVIDER (commodities + forex upgrade)
 // ============================================================
 
-interface AVQuote {
-  "Global Quote": {
-    "01. symbol": string;
-    "05. price": string;
-    "09. change": string;
-    "10. change percent": string;
-  };
+interface TwelveDataValue {
+  datetime: string;
+  open: string;
+  high: string;
+  low: string;
+  close: string;
 }
 
-interface CommodityMeta {
+interface TwelveDataResponse {
+  values?: TwelveDataValue[];
+  status?: string;
+}
+
+interface TwelveAssetConfig {
   id: string;
   name: string;
   symbol: string;
-  avSymbol: string;
+  tdSymbol: string;
+  category: AssetCategory;
 }
 
-const COMMODITY_META: CommodityMeta[] = [
-  { id: "xau-usd", name: "Or (Gold)", symbol: "XAU/USD", avSymbol: "GLD" },
-  { id: "xag-usd", name: "Argent (Silver)", symbol: "XAG/USD", avSymbol: "SLV" },
-  { id: "wti-oil", name: "Petrole WTI", symbol: "WTI", avSymbol: "USO" },
+const TWELVE_COMMODITIES: TwelveAssetConfig[] = [
+  { id: "xau-usd", name: "Or (Gold)", symbol: "XAU/USD", tdSymbol: "XAU/USD", category: "COMMODITIES" },
+  { id: "xag-usd", name: "Argent (Silver)", symbol: "XAG/USD", tdSymbol: "XAG/USD", category: "COMMODITIES" },
+  { id: "wti-oil", name: "Petrole WTI", symbol: "WTI", tdSymbol: "CL", category: "COMMODITIES" },
+  { id: "nat-gas", name: "Gaz Naturel", symbol: "NATGAS", tdSymbol: "NG", category: "COMMODITIES" },
 ];
 
-export async function fetchCommodities(
+const TWELVE_FOREX: TwelveAssetConfig[] = [
+  { id: "eur-usd", name: "Euro / Dollar", symbol: "EUR/USD", tdSymbol: "EUR/USD", category: "FOREX" },
+  { id: "gbp-usd", name: "Livre / Dollar", symbol: "GBP/USD", tdSymbol: "GBP/USD", category: "FOREX" },
+  { id: "usd-jpy", name: "Dollar / Yen", symbol: "USD/JPY", tdSymbol: "USD/JPY", category: "FOREX" },
+  { id: "usd-chf", name: "Dollar / Franc", symbol: "USD/CHF", tdSymbol: "USD/CHF", category: "FOREX" },
+];
+
+async function fetchTwelveDataAssets(
+  configs: TwelveAssetConfig[],
   apiKey: string,
   sentiment: (id: string) => number,
 ): Promise<Asset[]> {
   if (!apiKey) return [];
 
-  const fetchQuote = (avSymbol: string): Promise<Response> =>
-    fetch(
-      `https://www.alphavantage.co/query?function=GLOBAL_QUOTE&symbol=${avSymbol}&apikey=${apiKey}`,
-      { next: { revalidate: 300 } },
-    );
-
   const results = await Promise.allSettled(
-    COMMODITY_META.map((c) => fetchQuote(c.avSymbol)),
+    configs.map(async (cfg) => {
+      const url = `https://api.twelvedata.com/time_series?symbol=${cfg.tdSymbol}&interval=1h&outputsize=48&apikey=${apiKey}`;
+      const res = await fetch(url, { next: { revalidate: 300 } });
+      if (!res.ok) return null;
+      const data = (await res.json()) as TwelveDataResponse;
+      if (!data.values?.length) return null;
+
+      // Build sparkline (oldest first)
+      const sparkline = data.values
+        .map((v) => parseFloat(v.close) || 0)
+        .filter((v) => v > 0)
+        .reverse();
+
+      if (sparkline.length < 2) return null;
+
+      const price = sparkline[sparkline.length - 1];
+      const price1h = sparkline[sparkline.length - 2] ?? price;
+      const price24h = sparkline.length >= 24 ? sparkline[sparkline.length - 24] : sparkline[0];
+
+      const change1h = ((price - price1h) / price1h) * 100;
+      const change24h = ((price - price24h) / price24h) * 100;
+      const change7d = ((price - sparkline[0]) / sparkline[0]) * 100;
+
+      const rsi = calculateRSI(sparkline);
+      const aiScore = computeAIScore(change24h, change7d, rsi, cfg.category, sentiment(cfg.id));
+
+      return {
+        id: cfg.id,
+        name: cfg.name,
+        symbol: cfg.symbol,
+        category: cfg.category,
+        price,
+        change1h,
+        change24h,
+        change7d,
+        marketCap: 0,
+        volume: 0,
+        sparkline,
+        aiScore,
+        aiDirection: getDirection(aiScore),
+      } satisfies Asset;
+    })
   );
 
   const assets: Asset[] = [];
-
-  for (let i = 0; i < COMMODITY_META.length; i++) {
-    const meta = COMMODITY_META[i];
-    const result = results[i];
-
-    if (result.status === "rejected" || !result.value.ok) continue;
-
-    let data: AVQuote;
-    try {
-      data = (await result.value.json()) as AVQuote;
-    } catch {
-      continue;
-    }
-
-    const quote = data["Global Quote"];
-    if (!quote || !quote["05. price"]) continue;
-
-    const price = parseFloat(quote["05. price"]) || 0;
-    const changePercent = parseFloat(
-      (quote["10. change percent"] ?? "0").replace("%", ""),
-    ) || 0;
-
-    const rsi = calculateRSI([]);
-    const aiScore = computeAIScore(changePercent, 0, rsi, "COMMODITIES", sentiment(meta.id));
-
-    assets.push({
-      id: meta.id,
-      name: meta.name,
-      symbol: meta.symbol,
-      category: "COMMODITIES" as AssetCategory,
-      price,
-      change1h: 0,
-      change24h: changePercent,
-      change7d: 0,
-      marketCap: 0,
-      volume: 0,
-      sparkline: [],
-      aiScore,
-      aiDirection: getDirection(aiScore),
-    });
+  for (const r of results) {
+    if (r.status === "fulfilled" && r.value) assets.push(r.value);
   }
-
   return assets;
+}
+
+export async function fetchCommodities(
+  apiKey: string,
+  sentiment: (id: string) => number,
+): Promise<Asset[]> {
+  return fetchTwelveDataAssets(TWELVE_COMMODITIES, apiKey, sentiment);
+}
+
+export async function fetchTwelveForex(
+  apiKey: string,
+  sentiment: (id: string) => number,
+): Promise<Asset[]> {
+  return fetchTwelveDataAssets(TWELVE_FOREX, apiKey, sentiment);
 }
 
 // ============================================================

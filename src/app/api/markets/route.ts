@@ -3,12 +3,13 @@ import type { Asset, Signal } from "@/types/market";
 import { calculateRSI } from "@/lib/indicators";
 import { computeAIScore, getDirection, generateSignal } from "@/lib/scoring";
 import { correlatePolymarket, computePolymarketSentiment } from "@/lib/correlation";
-import { fetchCoinGecko, fetchForex, fetchCommodities, fetchPolymarket } from "@/lib/providers";
+import { fetchCoinGecko, fetchCommodities, fetchTwelveForex, fetchPolymarket } from "@/lib/providers";
 import { buildTradePlan } from "@/lib/tradePlan";
 
 export const revalidate = 60;
 
 const AV_KEY = process.env.ALPHA_VANTAGE_API_KEY ?? "";
+const TD_KEY = process.env.TWELVE_DATA_API_KEY ?? "";
 
 // ─── Alpha Vantage (stocks only, optional) ──────────────────
 
@@ -17,12 +18,16 @@ const STOCK_MAP: Record<string, string> = {
   TSLA: "Tesla", GOOGL: "Alphabet", AMZN: "Amazon", META: "Meta",
 };
 
+const ALLOWED_STOCK_SYMBOLS = new Set(Object.keys(STOCK_MAP));
+
 async function fetchStocks(): Promise<Asset[]> {
   if (!AV_KEY) return [];
 
   const symbols = Object.keys(STOCK_MAP).slice(0, 3);
   const results = await Promise.allSettled(
     symbols.map(async (sym): Promise<Asset | null> => {
+      // Guard: only process symbols explicitly listed in STOCK_MAP
+      if (!ALLOWED_STOCK_SYMBOLS.has(sym)) return null;
       try {
         // Fetch quote + intraday in parallel
         const [quoteRes, intradayRes] = await Promise.allSettled([
@@ -100,9 +105,9 @@ export async function GET() {
     // 2. Fetch all asset classes in parallel
     const [cryptoResult, forexResult, stocksResult, commodityResult] = await Promise.allSettled([
       fetchCoinGecko(sentiment),
-      fetchForex(sentiment),
+      fetchTwelveForex(TD_KEY, sentiment),
       fetchStocks(),
-      fetchCommodities(AV_KEY, sentiment),
+      fetchCommodities(TD_KEY, sentiment),
     ]);
 
     const allAssets: Asset[] = [

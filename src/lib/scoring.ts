@@ -131,5 +131,6 @@ export function generateSignal(
     type,
     message: `${parts.join(" + ")} \u2014 AI confidence ${score}/100`,
     severity,
+    generatedAt: new Date().toISOString(),
   };
 }

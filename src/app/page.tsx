@@ -3,6 +3,8 @@ import React, { useState, useEffect, useCallback, useMemo, useRef } from "react"
 import { computeAllIndicators, scoreIndicators, computeCombinedScore } from "@/lib/indicators";
 import type { IndicatorResult } from "@/lib/indicators";
 import { useBinanceWs } from "@/lib/useBinanceWs";
+import { useAlerts, getFreshness, getAgeText } from "@/lib/useAlerts";
+import type { Alert } from "@/lib/useAlerts";
 
 // ─── Types ───────────────────────────────────────────────────
 
@@ -218,6 +220,10 @@ export default function PredictionDashboard() {
   const [error, setError] = useState<string | null>(null);
   const [activeIndicators, setActiveIndicators] = useState<string[]>(["rsi", "macd", "bollinger"]);
   const [showIndicators, setShowIndicators] = useState(false);
+  const [showAlertPanel, setShowAlertPanel] = useState(false);
+
+  // Alert system
+  const { alerts, latestCritical, unreadCount, processSignals, dismissBanner, markAllRead } = useAlerts();
 
   const fetchData = useCallback(async () => {
     try {
@@ -230,18 +236,29 @@ export default function PredictionDashboard() {
         if (!prev && data.assets?.length > 0) return data.assets[0].id;
         return prev;
       });
+      // Process signals into alerts
+      if (data.signals?.length > 0) {
+        processSignals(data.signals, data.assets);
+      }
     } catch (err: unknown) {
       setError(err instanceof Error ? err.message : "Erreur de chargement");
     } finally {
       setLoading(false);
     }
-  }, []);
+  }, [processSignals]);
 
   useEffect(() => {
     fetchData();
     const interval = setInterval(fetchData, 30_000);
     return () => clearInterval(interval);
   }, [fetchData]);
+
+  // Update alert ages every 30 seconds
+  const [, setTick] = useState(0);
+  useEffect(() => {
+    const t = setInterval(() => setTick((n) => n + 1), 30_000);
+    return () => clearInterval(t);
+  }, []);
 
   // Live crypto prices via Binance WebSocket
   const cryptoIds = useMemo(() => (marketData?.assets ?? []).filter((a) => a.category === "CRYPTO").map((a) => a.id), [marketData]);
@@ -342,9 +359,155 @@ export default function PredictionDashboard() {
                 >{cat}</button>
               );
             })}
+          {/* Alert Bell */}
+          <div style={{ position: "relative" }}>
+            <button
+              onClick={() => { setShowAlertPanel(!showAlertPanel); if (!showAlertPanel) markAllRead(); }}
+              style={{
+                background: "#0F1424", border: `1px solid ${unreadCount > 0 ? "#F59E0B40" : "#1C2338"}`,
+                borderRadius: 6, width: 40, height: 40, cursor: "pointer",
+                display: "flex", alignItems: "center", justifyContent: "center",
+                fontSize: 18, transition: "border-color 0.2s", position: "relative",
+              }}
+            >
+              {"\uD83D\uDD14"}
+              {unreadCount > 0 && (
+                <span style={{
+                  position: "absolute", top: -6, right: -6,
+                  background: "#dc2626", color: "#fff",
+                  fontSize: 10, fontWeight: 700, fontFamily: M,
+                  minWidth: 18, height: 18, borderRadius: 9,
+                  border: "2px solid #05070D",
+                  display: "flex", alignItems: "center", justifyContent: "center",
+                  padding: "0 3px",
+                }}>{unreadCount}</span>
+              )}
+            </button>
+
+            {/* Alert Panel */}
+            {showAlertPanel && (
+              <div style={{
+                position: "absolute", top: 48, right: 0, width: 420,
+                background: "#0A0D18", border: "1px solid #1C2338",
+                borderRadius: 8, boxShadow: "0 20px 60px rgba(0,0,0,0.8)",
+                zIndex: 100, overflow: "hidden", maxHeight: "70vh", overflowY: "auto",
+              }}>
+                <div style={{
+                  background: "#111827", padding: "12px 16px",
+                  borderBottom: "1px solid #1C2338",
+                  display: "flex", alignItems: "center", justifyContent: "space-between",
+                }}>
+                  <span style={{ fontFamily: R, fontWeight: 700, fontSize: 13, letterSpacing: "0.12em", color: "#94A3B8" }}>ALERTES</span>
+                  <span style={{ fontFamily: M, fontSize: 11, color: "#475569" }}>{alerts.length} alertes</span>
+                </div>
+
+                {alerts.length === 0 ? (
+                  <div style={{ padding: 40, textAlign: "center", color: "#334155", fontSize: 13, fontFamily: R }}>Aucune alerte active</div>
+                ) : (
+                  alerts.map((alert) => {
+                    const freshness = getFreshness(alert.generatedAt);
+                    const barColor = freshness === "FRESH" ? "#dc2626" : freshness === "WARM" ? "#f97316" : freshness === "OLD" ? "#475569" : "#1e293b";
+                    const textColor = freshness === "FRESH" ? "#f87171" : freshness === "WARM" ? "#fb923c" : freshness === "OLD" ? "#94a3b8" : "#475569";
+                    const timeColor = freshness === "FRESH" ? "#f87171" : freshness === "WARM" ? "#fb923c" : freshness === "OLD" ? "#475569" : "#334155";
+                    const isExpired = freshness === "EXPIRED";
+                    const typeStyle = alert.type === "SELL"
+                      ? { bg: "rgba(220,38,38,0.2)", color: "#f87171", border: "rgba(220,38,38,0.3)" }
+                      : alert.type === "BUY"
+                      ? { bg: "rgba(34,197,94,0.2)", color: "#4ade80", border: "rgba(34,197,94,0.3)" }
+                      : { bg: "rgba(234,179,8,0.2)", color: "#facc15", border: "rgba(234,179,8,0.3)" };
+                    const freshPercent = freshness === "FRESH" ? 95 : freshness === "WARM" ? 50 : freshness === "OLD" ? 15 : 0;
+
+                    return (
+                      <div key={alert.id} style={{
+                        padding: "12px 16px", borderBottom: "1px solid #111827",
+                        display: "flex", gap: 12, opacity: isExpired ? 0.4 : 1,
+                      }}>
+                        <div style={{ width: 3, borderRadius: 2, flexShrink: 0, alignSelf: "stretch", minHeight: 40, background: barColor }} />
+                        <div style={{ flex: 1 }}>
+                          <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 4 }}>
+                            <span style={{ fontFamily: R, fontSize: 14, fontWeight: 700, letterSpacing: "0.06em", color: textColor, textDecoration: isExpired ? "line-through" : "none" }}>
+                              {alert.asset}
+                            </span>
+                            <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                              <span style={{
+                                fontSize: 10, fontWeight: 700, letterSpacing: "0.12em", fontFamily: M,
+                                padding: "2px 6px", borderRadius: 2,
+                                background: typeStyle.bg, color: typeStyle.color, border: `1px solid ${typeStyle.border}`,
+                                opacity: isExpired ? 0.4 : 1,
+                              }}>{alert.type}</span>
+                              <span style={{ fontSize: 10, fontFamily: M, color: timeColor, whiteSpace: "nowrap" }}>
+                                {getAgeText(alert.generatedAt)}{isExpired ? " \u00B7 EXPIR\u00C9" : ""}
+                              </span>
+                            </div>
+                          </div>
+                          <div style={{ fontFamily: R, fontSize: 12, color: isExpired ? "#334155" : "#64748b", marginBottom: 6 }}>
+                            {isExpired ? "Signal trop ancien" : alert.message}
+                          </div>
+                          {!isExpired && alert.entry && (
+                            <div style={{ display: "flex", gap: 10, fontFamily: M, fontSize: 11 }}>
+                              <span><span style={{ color: "#475569" }}>Entry </span><span style={{ color: "#94a3b8" }}>${alert.entry.toLocaleString()}</span></span>
+                              {alert.stopLoss && <span><span style={{ color: "#475569" }}>SL </span><span style={{ color: "#94a3b8" }}>${alert.stopLoss.toLocaleString()}</span></span>}
+                              {alert.target1 && <span><span style={{ color: "#475569" }}>T1 </span><span style={{ color: "#94a3b8" }}>${alert.target1.toLocaleString()}</span></span>}
+                            </div>
+                          )}
+                          {!isExpired && (
+                            <div style={{ marginTop: 6, height: 2, background: "#1e293b", borderRadius: 1, overflow: "hidden" }}>
+                              <div className="score-bar-fill" style={{ height: "100%", width: `${freshPercent}%`, background: barColor, borderRadius: 1 }} />
+                            </div>
+                          )}
+                        </div>
+                      </div>
+                    );
+                  })
+                )}
+              </div>
+            )}
+            </div>
           </div>
         </div>
       </header>
+
+      {/* ═══════════════════════════════════════════════
+          CRITICAL BANNER (persists until dismissed)
+      ═══════════════════════════════════════════════ */}
+      {latestCritical && (
+        <div style={{
+          background: "linear-gradient(90deg, #7f1d1d, #dc2626)",
+          borderBottom: "1px solid #ef4444",
+          padding: "10px 20px",
+          display: "flex", alignItems: "center", justifyContent: "space-between",
+          animation: "pulse-banner 2s infinite",
+        }}>
+          <div style={{ display: "flex", alignItems: "center", gap: 12, flex: 1, flexWrap: "wrap" }}>
+            <span style={{
+              background: "#ef4444", border: "1px solid #fca5a5",
+              padding: "2px 8px", fontSize: 11, fontWeight: 700,
+              letterSpacing: "0.12em", borderRadius: 2, fontFamily: R,
+            }}>{"\uD83D\uDD34"} CRITIQUE</span>
+            <div>
+              <div style={{ fontSize: 16, fontWeight: 700, color: "#fff", fontFamily: R, letterSpacing: "0.06em" }}>
+                {latestCritical.asset} — {latestCritical.type}
+              </div>
+              <div style={{ fontSize: 13, color: "#fca5a5", fontFamily: R }}>{latestCritical.message}</div>
+            </div>
+            {latestCritical.entry && (
+              <div style={{ display: "flex", gap: 16, fontSize: 12, fontFamily: M }}>
+                <span><span style={{ color: "#fca5a5" }}>Entry </span><b style={{ color: "#fff" }}>${latestCritical.entry.toLocaleString()}</b></span>
+                {latestCritical.stopLoss && <span><span style={{ color: "#fca5a5" }}>SL </span><b style={{ color: "#fff" }}>${latestCritical.stopLoss.toLocaleString()}</b></span>}
+                {latestCritical.target1 && <span><span style={{ color: "#fca5a5" }}>T1 </span><b style={{ color: "#fff" }}>${latestCritical.target1.toLocaleString()}</b></span>}
+              </div>
+            )}
+          </div>
+          <div style={{ display: "flex", alignItems: "center", gap: 16, flexShrink: 0 }}>
+            <span style={{ fontSize: 11, color: "#fca5a5", fontFamily: M }}>{"\u23F1"} {getAgeText(latestCritical.generatedAt)}</span>
+            <button onClick={dismissBanner} style={{
+              background: "rgba(255,255,255,0.15)", border: "1px solid rgba(255,255,255,0.3)",
+              color: "#fff", cursor: "pointer", width: 24, height: 24,
+              borderRadius: 3, fontSize: 14, display: "flex", alignItems: "center", justifyContent: "center",
+            }}>{"\u2715"}</button>
+          </div>
+        </div>
+      )}
 
       {/* ═══════════════════════════════════════════════
           TICKER TAPE

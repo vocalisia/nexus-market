@@ -1,0 +1,431 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8">
+<title>NEXUS MARKET — Mockup Alertes</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body { background: #05070D; color: #F1F5F9; font-family: 'Rajdhani', monospace; }
+  @import url('https://fonts.googleapis.com/css2?family=Rajdhani:wght@400;600;700&family=JetBrains+Mono:wght@400;700&display=swap');
+
+  /* BANNIÈRE CRITIQUE */
+  .alert-banner {
+    background: linear-gradient(90deg, #7f1d1d, #dc2626);
+    border-bottom: 1px solid #ef4444;
+    padding: 10px 20px;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    animation: pulse-banner 2s infinite;
+  }
+  @keyframes pulse-banner {
+    0%, 100% { border-bottom-color: #ef4444; }
+    50% { border-bottom-color: #fca5a5; }
+  }
+  .banner-left { display: flex; align-items: center; gap: 12px; }
+  .banner-badge {
+    background: #ef4444;
+    border: 1px solid #fca5a5;
+    padding: 2px 8px;
+    font-size: 11px;
+    font-weight: 700;
+    letter-spacing: 2px;
+    border-radius: 2px;
+  }
+  .banner-asset { font-size: 16px; font-weight: 700; color: #fff; letter-spacing: 1px; }
+  .banner-msg { font-size: 13px; color: #fca5a5; }
+  .banner-plan {
+    display: flex; gap: 16px; font-size: 12px;
+    font-family: 'JetBrains Mono', monospace;
+  }
+  .banner-plan span { color: #fca5a5; }
+  .banner-plan b { color: #fff; }
+  .banner-right { display: flex; align-items: center; gap: 16px; }
+  .banner-time {
+    font-size: 11px; color: #fca5a5;
+    font-family: 'JetBrains Mono', monospace;
+  }
+  .banner-close {
+    background: rgba(255,255,255,0.15);
+    border: 1px solid rgba(255,255,255,0.3);
+    color: #fff; cursor: pointer;
+    width: 24px; height: 24px;
+    border-radius: 3px;
+    font-size: 14px;
+    display: flex; align-items: center; justify-content: center;
+  }
+  .banner-close:hover { background: rgba(255,255,255,0.25); }
+
+  /* HEADER */
+  .header {
+    background: #0a0d18;
+    border-bottom: 1px solid #1e293b;
+    padding: 12px 24px;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+  }
+  .logo { font-size: 20px; font-weight: 700; letter-spacing: 3px; color: #38bdf8; }
+  .logo span { color: #64748b; }
+  .header-right { display: flex; align-items: center; gap: 16px; }
+  .live-dot {
+    display: flex; align-items: center; gap: 6px;
+    font-size: 11px; color: #22c55e; letter-spacing: 2px;
+  }
+  .dot { width: 7px; height: 7px; background: #22c55e; border-radius: 50%; animation: blink 1.5s infinite; }
+  @keyframes blink { 0%,100%{opacity:1} 50%{opacity:0.3} }
+
+  /* CLOCHE */
+  .bell-btn {
+    position: relative; background: #111827;
+    border: 1px solid #1e293b; border-radius: 6px;
+    width: 40px; height: 40px;
+    display: flex; align-items: center; justify-content: center;
+    cursor: pointer; font-size: 18px;
+    transition: border-color 0.2s;
+  }
+  .bell-btn:hover { border-color: #38bdf8; }
+  .bell-badge {
+    position: absolute; top: -6px; right: -6px;
+    background: #dc2626; color: #fff;
+    font-size: 10px; font-weight: 700;
+    min-width: 18px; height: 18px;
+    border-radius: 9px; border: 2px solid #05070D;
+    display: flex; align-items: center; justify-content: center;
+    font-family: 'JetBrains Mono', monospace;
+    padding: 0 3px;
+  }
+
+  /* PANEL ALERTES */
+  .alert-panel {
+    position: absolute; top: 100px; right: 24px;
+    width: 440px;
+    background: #0a0d18;
+    border: 1px solid #1e293b;
+    border-radius: 8px;
+    box-shadow: 0 20px 60px rgba(0,0,0,0.8);
+    z-index: 100;
+    overflow: hidden;
+  }
+  .panel-header {
+    background: #111827;
+    padding: 14px 16px;
+    display: flex; align-items: center; justify-content: space-between;
+    border-bottom: 1px solid #1e293b;
+  }
+  .panel-title { font-size: 13px; font-weight: 700; letter-spacing: 2px; color: #94a3b8; }
+  .panel-count { font-size: 11px; color: #64748b; }
+
+  .alert-item {
+    padding: 12px 16px;
+    border-bottom: 1px solid #111827;
+    display: flex; gap: 12px; align-items: flex-start;
+    transition: background 0.15s;
+  }
+  .alert-item:hover { background: #111827; }
+
+  /* Freshness color bar à gauche */
+  .alert-bar { width: 3px; border-radius: 2px; flex-shrink: 0; align-self: stretch; min-height: 40px; }
+  .bar-high   { background: #dc2626; }
+  .bar-med    { background: #f97316; }
+  .bar-old    { background: #475569; }
+  .bar-expired{ background: #1e293b; }
+
+  .alert-content { flex: 1; }
+  .alert-top { display: flex; align-items: center; justify-content: space-between; margin-bottom: 4px; }
+  .alert-asset { font-size: 14px; font-weight: 700; letter-spacing: 1px; }
+  .alert-asset.high { color: #f87171; }
+  .alert-asset.med  { color: #fb923c; }
+  .alert-asset.old  { color: #94a3b8; }
+  .alert-asset.expired { color: #475569; text-decoration: line-through; }
+
+  .alert-type {
+    font-size: 10px; font-weight: 700; letter-spacing: 2px;
+    padding: 2px 6px; border-radius: 2px;
+  }
+  .type-sell { background: rgba(220,38,38,0.2); color: #f87171; border: 1px solid rgba(220,38,38,0.3); }
+  .type-buy  { background: rgba(34,197,94,0.2); color: #4ade80; border: 1px solid rgba(34,197,94,0.3); }
+  .type-watch{ background: rgba(234,179,8,0.2); color: #facc15; border: 1px solid rgba(234,179,8,0.3); }
+
+  .alert-msg { font-size: 12px; color: #64748b; margin-bottom: 6px; }
+  .alert-msg.expired { color: #334155; }
+
+  .alert-plan {
+    display: flex; gap: 10px; font-size: 11px;
+    font-family: 'JetBrains Mono', monospace;
+  }
+  .alert-plan .lbl { color: #475569; }
+  .alert-plan .val { color: #94a3b8; }
+
+  .alert-time {
+    font-size: 10px;
+    font-family: 'JetBrains Mono', monospace;
+    white-space: nowrap;
+    flex-shrink: 0;
+  }
+  .time-high { color: #f87171; }
+  .time-med  { color: #fb923c; }
+  .time-old  { color: #475569; }
+  .time-exp  { color: #334155; }
+
+  /* FRESHNESS INDICATOR */
+  .freshness-bar {
+    margin-top: 6px;
+    height: 2px;
+    background: #1e293b;
+    border-radius: 1px;
+    overflow: hidden;
+  }
+  .freshness-fill { height: 100%; border-radius: 1px; transition: width 1s; }
+  .fill-high { background: linear-gradient(90deg, #dc2626, #ef4444); }
+  .fill-med  { background: linear-gradient(90deg, #ea580c, #f97316); }
+  .fill-old  { background: #475569; }
+
+  /* EMPTY STATE */
+  .empty { padding: 40px; text-align: center; color: #334155; font-size: 13px; }
+
+  /* MAIN DASHBOARD (simplifié) */
+  .main { padding: 20px 24px; }
+  .section-title { font-size: 11px; color: #475569; letter-spacing: 3px; margin-bottom: 12px; }
+  .assets-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 10px; }
+  .asset-card {
+    background: #0d1117; border: 1px solid #1e293b;
+    border-radius: 6px; padding: 12px;
+  }
+  .asset-symbol { font-size: 13px; font-weight: 700; letter-spacing: 1px; color: #94a3b8; }
+  .asset-price { font-size: 18px; font-weight: 700; color: #f1f5f9; margin: 4px 0; font-family: 'JetBrains Mono', monospace; }
+  .asset-change { font-size: 11px; }
+  .up { color: #4ade80; }
+  .down { color: #f87171; }
+  .neutral { color: #64748b; }
+
+  /* TOOLTIPS INFO */
+  .info-box {
+    background: #111827; border: 1px solid #1e293b;
+    border-radius: 6px; padding: 12px 16px;
+    font-size: 12px; color: #64748b;
+    margin-top: 16px;
+  }
+  .info-box b { color: #94a3b8; }
+</style>
+</head>
+<body>
+
+<!-- BANNIÈRE CRITIQUE (toujours visible jusqu'à ✕) -->
+<div class="alert-banner" id="banner">
+  <div class="banner-left">
+    <div class="banner-badge">🔴 CRITIQUE</div>
+    <div>
+      <div class="banner-asset">BTC/USD — SELL</div>
+      <div class="banner-msg">RSI survente extrême (28) — signal fort</div>
+    </div>
+    <div class="banner-plan">
+      <div><span>Entry </span><b>$66,420</b></div>
+      <div><span>SL </span><b>$68,900</b></div>
+      <div><span>T1 </span><b>$64,200</b></div>
+      <div><span>T2 </span><b>$62,800</b></div>
+    </div>
+  </div>
+  <div class="banner-right">
+    <div class="banner-time">⏱ généré il y a <b id="banner-age">3</b> min</div>
+    <button class="banner-close" onclick="document.getElementById('banner').style.display='none'">✕</button>
+  </div>
+</div>
+
+<!-- HEADER -->
+<div class="header">
+  <div class="logo">NEXUS <span>—</span> AI Market Intelligence</div>
+  <div class="header-right">
+    <div class="live-dot"><div class="dot"></div> LIVE</div>
+
+    <!-- FILTRES -->
+    <div style="display:flex;gap:6px;font-size:11px;letter-spacing:1px;">
+      <button style="background:#1e3a5f;border:1px solid #38bdf8;color:#38bdf8;padding:4px 10px;border-radius:3px;cursor:pointer;">ALL</button>
+      <button style="background:transparent;border:1px solid #1e293b;color:#475569;padding:4px 10px;border-radius:3px;cursor:pointer;">CRYPTO</button>
+      <button style="background:transparent;border:1px solid #1e293b;color:#475569;padding:4px 10px;border-radius:3px;cursor:pointer;">FOREX</button>
+      <button style="background:transparent;border:1px solid #1e293b;color:#475569;padding:4px 10px;border-radius:3px;cursor:pointer;">COMMODITIES</button>
+    </div>
+
+    <!-- CLOCHE -->
+    <div class="bell-btn" onclick="togglePanel()" id="bell">
+      🔔
+      <div class="bell-badge">5</div>
+    </div>
+  </div>
+</div>
+
+<!-- PANEL ALERTES -->
+<div class="alert-panel" id="alert-panel" style="display:none;">
+  <div class="panel-header">
+    <div class="panel-title">ALERTES ACTIVES</div>
+    <div class="panel-count">5 alertes · 3 non lues</div>
+  </div>
+
+  <!-- ALERTE 1 — HIGH, 3 min (rouge vif) -->
+  <div class="alert-item">
+    <div class="alert-bar bar-high"></div>
+    <div class="alert-content">
+      <div class="alert-top">
+        <span class="alert-asset high">BTC/USD</span>
+        <div style="display:flex;align-items:center;gap:8px;">
+          <span class="alert-type type-sell">SELL</span>
+          <span class="alert-time time-high">il y a 3 min</span>
+        </div>
+      </div>
+      <div class="alert-msg">RSI survente extrême (28) — signal fort</div>
+      <div class="alert-plan">
+        <span><span class="lbl">Entry </span><span class="val">$66,420</span></span>
+        <span><span class="lbl">SL </span><span class="val">$68,900</span></span>
+        <span><span class="lbl">T1 </span><span class="val">$64,200</span></span>
+      </div>
+      <div class="freshness-bar"><div class="freshness-fill fill-high" style="width:95%"></div></div>
+    </div>
+  </div>
+
+  <!-- ALERTE 2 — HIGH, 11 min (rouge) -->
+  <div class="alert-item">
+    <div class="alert-bar bar-high"></div>
+    <div class="alert-content">
+      <div class="alert-top">
+        <span class="alert-asset high">XAU/USD</span>
+        <div style="display:flex;align-items:center;gap:8px;">
+          <span class="alert-type type-sell">SELL</span>
+          <span class="alert-time time-high">il y a 11 min</span>
+        </div>
+      </div>
+      <div class="alert-msg">Bollinger band cassé à la baisse + volume spike</div>
+      <div class="alert-plan">
+        <span><span class="lbl">Entry </span><span class="val">$3,105</span></span>
+        <span><span class="lbl">SL </span><span class="val">$3,142</span></span>
+        <span><span class="lbl">T1 </span><span class="val">$3,068</span></span>
+      </div>
+      <div class="freshness-bar"><div class="freshness-fill fill-high" style="width:63%"></div></div>
+    </div>
+  </div>
+
+  <!-- ALERTE 3 — MEDIUM, 22 min (orange) -->
+  <div class="alert-item">
+    <div class="alert-bar bar-med"></div>
+    <div class="alert-content">
+      <div class="alert-top">
+        <span class="alert-asset med">EUR/USD</span>
+        <div style="display:flex;align-items:center;gap:8px;">
+          <span class="alert-type type-watch">WATCH</span>
+          <span class="alert-time time-med">il y a 22 min</span>
+        </div>
+      </div>
+      <div class="alert-msg">Momentum faible, MACD croisement baissier en formation</div>
+      <div class="freshness-bar"><div class="freshness-fill fill-med" style="width:27%"></div></div>
+    </div>
+  </div>
+
+  <!-- ALERTE 4 — LOW, 44 min (gris foncé) -->
+  <div class="alert-item">
+    <div class="alert-bar bar-old"></div>
+    <div class="alert-content">
+      <div class="alert-top">
+        <span class="alert-asset old">ETH/USD</span>
+        <div style="display:flex;align-items:center;gap:8px;">
+          <span class="alert-type type-buy">BUY</span>
+          <span class="alert-time time-old">il y a 44 min</span>
+        </div>
+      </div>
+      <div class="alert-msg" style="color:#475569;">RSI rebond zone survente, signaux divergents</div>
+      <div class="freshness-bar"><div class="freshness-fill fill-old" style="width:10%"></div></div>
+    </div>
+  </div>
+
+  <!-- ALERTE 5 — EXPIRÉ, 73 min -->
+  <div class="alert-item" style="opacity:0.4;">
+    <div class="alert-bar bar-expired"></div>
+    <div class="alert-content">
+      <div class="alert-top">
+        <span class="alert-asset expired">WTI/USD</span>
+        <div style="display:flex;align-items:center;gap:8px;">
+          <span class="alert-type type-sell" style="opacity:0.4;">SELL</span>
+          <span class="alert-time time-exp">il y a 73 min · EXPIRÉ</span>
+        </div>
+      </div>
+      <div class="alert-msg expired">Signal trop ancien — ne pas utiliser</div>
+    </div>
+  </div>
+
+</div>
+
+<!-- DASHBOARD (simulé) -->
+<div class="main">
+  <div class="section-title">CRYPTO</div>
+  <div class="assets-grid">
+    <div class="asset-card" style="border-color:#374151;">
+      <div class="asset-symbol">BTC/USD <span class="down" style="font-size:10px;">● SELL</span></div>
+      <div class="asset-price">$66,946</div>
+      <div class="asset-change down">▼ -2.4% 24h</div>
+    </div>
+    <div class="asset-card">
+      <div class="asset-symbol">ETH/USD</div>
+      <div class="asset-price">$2,023</div>
+      <div class="asset-change up">▲ +1.1% 24h</div>
+    </div>
+    <div class="asset-card">
+      <div class="asset-symbol">SOL/USD</div>
+      <div class="asset-price">$83.37</div>
+      <div class="asset-change down">▼ -0.8% 24h</div>
+    </div>
+    <div class="asset-card">
+      <div class="asset-symbol">DOGE/USD</div>
+      <div class="asset-price">$0.0923</div>
+      <div class="asset-change up">▲ +3.2% 24h</div>
+    </div>
+  </div>
+
+  <div class="section-title" style="margin-top:20px;">COMMODITIES — <span style="color:#22c55e;font-size:10px;">DONNÉES RÉELLES TWELVE DATA</span></div>
+  <div class="assets-grid">
+    <div class="asset-card" style="border-color:#374151;">
+      <div class="asset-symbol">XAU/USD <span class="down" style="font-size:10px;">● SELL</span></div>
+      <div class="asset-price">$3,105</div>
+      <div class="asset-change down">▼ -1.2% 24h</div>
+    </div>
+    <div class="asset-card">
+      <div class="asset-symbol">XAG/USD</div>
+      <div class="asset-price">$34.20</div>
+      <div class="asset-change neutral">— 0.0% 24h</div>
+    </div>
+    <div class="asset-card">
+      <div class="asset-symbol">WTI</div>
+      <div class="asset-price">$68.40</div>
+      <div class="asset-change down">▼ -0.5% 24h</div>
+    </div>
+    <div class="asset-card">
+      <div class="asset-symbol">NATGAS</div>
+      <div class="asset-price">$3.82</div>
+      <div class="asset-change up">▲ +0.3% 24h</div>
+    </div>
+  </div>
+
+  <div class="info-box">
+    <b>Légende alertes :</b> &nbsp;
+    <span style="color:#f87171;">■</span> 0–15 min = agir maintenant &nbsp;·&nbsp;
+    <span style="color:#fb923c;">■</span> 15–30 min = surveiller &nbsp;·&nbsp;
+    <span style="color:#475569;">■</span> 30–60 min = prudence &nbsp;·&nbsp;
+    <span style="color:#334155;">■</span> +60 min = expiré, ignorer
+  </div>
+</div>
+
+<script>
+  function togglePanel() {
+    const p = document.getElementById('alert-panel');
+    p.style.display = p.style.display === 'none' ? 'block' : 'none';
+  }
+
+  // Simuler l'âge qui grandit
+  let bannerAge = 3;
+  setInterval(() => {
+    bannerAge++;
+    document.getElementById('banner-age').textContent = bannerAge;
+  }, 60000);
+
+  // Ouvrir le panel au départ pour montrer
+  setTimeout(() => togglePanel(), 500);
+</script>
+</body>
+</html>

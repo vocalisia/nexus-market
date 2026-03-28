@@ -79,6 +79,12 @@ body {
 }
 .cursor-blink { animation: cursor-blink 1s step-end infinite; }
 
+/* ── Critical banner pulse ── */
+@keyframes pulse-banner {
+  0%, 100% { border-bottom-color: #ef4444; }
+  50% { border-bottom-color: #fca5a5; }
+}
+
 /* ── Responsive stacking ── */
 @media (max-width: 900px) {
   .main-grid   { grid-template-columns: 1fr !important; }
