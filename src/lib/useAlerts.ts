@@ -1,5 +1,7 @@
 "use client";
 import { useState, useEffect, useCallback, useRef } from "react";
+import { isMarketOpen } from "./marketHours";
+import type { AssetCategory } from "@/types/market";
 
 export interface Alert {
   id: string;
@@ -15,6 +17,7 @@ export interface Alert {
   generatedAt: string;
   dismissedAt?: string | null;
   read: boolean;
+  category?: AssetCategory;
 }
 
 export type Freshness = "FRESH" | "WARM" | "OLD" | "EXPIRED";
@@ -108,6 +111,12 @@ export function useAlerts() {
           signal.asset.toLowerCase().includes(a.id.toLowerCase())
         );
 
+        // Block alerts on closed markets
+        if (matchedAsset?.category) {
+          const mkt = isMarketOpen(matchedAsset.category as AssetCategory);
+          if (!mkt.isOpen) continue;
+        }
+
         const alert: Alert = {
           id: crypto.randomUUID?.() ?? `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
           asset: signal.asset,
@@ -122,6 +131,7 @@ export function useAlerts() {
           generatedAt: signal.generatedAt ?? new Date().toISOString(),
           dismissedAt: null,
           read: false,
+          category: (matchedAsset?.category as AssetCategory) ?? undefined,
         };
 
         newAlerts.push(alert);
@@ -160,7 +170,11 @@ export function useAlerts() {
   }, []);
 
   const unreadCount = alerts.filter((a) => !a.read && getFreshness(a.generatedAt) !== "EXPIRED").length;
-  const activeAlerts = alerts.filter((a) => !a.dismissedAt || getFreshness(a.generatedAt) !== "EXPIRED");
+  const activeAlerts = alerts.filter((a) => {
+    if (getFreshness(a.generatedAt) === "EXPIRED") return false;
+    if (a.category && !isMarketOpen(a.category).isOpen) return false;
+    return true;
+  });
 
   return {
     alerts: activeAlerts,
