@@ -1,5 +1,6 @@
 import type { AssetCategory, AIDirection, Signal } from "@/types/market";
 import { calculateRSI } from "./indicators";
+import { isMarketOpen } from "./marketHours";
 
 // --- Category-specific scoring configs ---
 
@@ -107,6 +108,10 @@ export function generateSignal(
   direction: AIDirection,
   category: AssetCategory
 ): Signal | null {
+  // Block signals on closed markets
+  const status = isMarketOpen(category);
+  if (!status.isOpen) return null;
+
   const t = SIGNAL_THRESHOLDS[category];
   const parts: string[] = [];
   let severity: "low" | "medium" | "high" = "low";

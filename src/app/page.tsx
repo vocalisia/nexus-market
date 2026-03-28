@@ -5,6 +5,7 @@ import type { IndicatorResult } from "@/lib/indicators";
 import { useBinanceWs } from "@/lib/useBinanceWs";
 import { useAlerts, getFreshness, getAgeText } from "@/lib/useAlerts";
 import type { Alert } from "@/lib/useAlerts";
+import { isMarketOpen } from "@/lib/marketHours";
 
 // ─── Types ───────────────────────────────────────────────────
 
@@ -564,8 +565,10 @@ export default function PredictionDashboard() {
           <div style={{ display: "flex", gap: 8, overflowX: "auto", paddingBottom: 4 }}>
             {filteredAssets.map((asset) => {
               const isSelected = asset.id === selectedAssetId;
-              const changeColor = getChangeColor(asset.change24h);
-              const scoreColor = getScoreColor(asset.aiScore);
+              const mktStatus = isMarketOpen(asset.category);
+              const closed = !mktStatus.isOpen;
+              const changeColor = closed ? "#475569" : getChangeColor(asset.change24h);
+              const scoreColor = closed ? "#475569" : getScoreColor(asset.aiScore);
               const dir = asset.aiDirection;
               return (
                 <button key={asset.id}
@@ -581,21 +584,32 @@ export default function PredictionDashboard() {
                     cursor: "pointer",
                     transition: "all 0.18s",
                     boxShadow: isSelected ? "inset 0 0 40px #F59E0B06" : "none",
+                    opacity: closed ? 0.6 : 1,
                   }}
                 >
-                  {/* Symbol + direction */}
+                  {/* Symbol + direction + market status */}
                   <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 5 }}>
-                    <span style={{ fontFamily: R, fontWeight: 700, fontSize: 14, color: "#F1F5F9", letterSpacing: "0.1em" }}>
+                    <span style={{ fontFamily: R, fontWeight: 700, fontSize: 14, color: closed ? "#64748B" : "#F1F5F9", letterSpacing: "0.1em" }}>
                       {asset.symbol.toUpperCase()}
                     </span>
-                    <span style={{ fontSize: 13, color: scoreColor, fontFamily: M }}>
-                      {dir === "UP" ? "↑" : dir === "DOWN" ? "↓" : "→"}
-                    </span>
+                    {closed ? (
+                      <span style={{ fontFamily: M, fontSize: 9, fontWeight: 700, color: "#475569", border: "1px solid #1C2338", padding: "1px 4px", letterSpacing: "0.08em" }}>
+                        {mktStatus.label}
+                      </span>
+                    ) : (
+                      <span style={{ fontSize: 13, color: scoreColor, fontFamily: M }}>
+                        {dir === "UP" ? "\u2191" : dir === "DOWN" ? "\u2193" : "\u2192"}
+                      </span>
+                    )}
                   </div>
 
                   {/* Price */}
                   <div style={{ fontFamily: M, fontWeight: 700, fontSize: 16, marginBottom: 6, letterSpacing: "-0.02em" }}>
-                    <FlashPrice price={asset.price} prevPrice={livePrices[asset.id]?.prevPrice} style={{ color: "#F1F5F9", fontFamily: M, fontWeight: 700, fontSize: 16 }} />
+                    {closed ? (
+                      <span style={{ color: "#64748B" }}>{formatPrice(asset.price)}</span>
+                    ) : (
+                      <FlashPrice price={asset.price} prevPrice={livePrices[asset.id]?.prevPrice} style={{ color: "#F1F5F9", fontFamily: M, fontWeight: 700, fontSize: 16 }} />
+                    )}
                   </div>
 
                   {/* Change + Score */}
@@ -603,9 +617,13 @@ export default function PredictionDashboard() {
                     <span style={{ fontFamily: M, fontSize: 12, color: changeColor }}>
                       {formatChange(asset.change24h)}
                     </span>
-                    <span style={{ fontFamily: R, fontWeight: 700, fontSize: 11, color: scoreColor, border: `1px solid ${scoreColor}40`, padding: "1px 5px", letterSpacing: "0.05em" }}>
-                      {asset.aiScore}
-                    </span>
+                    {closed ? (
+                      <span style={{ fontFamily: M, fontSize: 9, color: "#334155" }}>dernier cours</span>
+                    ) : (
+                      <span style={{ fontFamily: R, fontWeight: 700, fontSize: 11, color: scoreColor, border: `1px solid ${scoreColor}40`, padding: "1px 5px", letterSpacing: "0.05em" }}>
+                        {asset.aiScore}
+                      </span>
+                    )}
                   </div>
 
                   {/* Mini sparkline flush to card bottom */}
