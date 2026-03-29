@@ -285,6 +285,7 @@ async function processVariant(
 
     // Level-based or % threshold
     const hasLevels = alert.entry && alert.stopLoss && alert.target1;
+    const pastMedium = age > windows.medium; // after medium window → force close
     let result: "WIN" | "LOSS" | "NEUTRAL";
     let points: number;
     let levelHit: "TP2" | "TP1" | "SL" | "NONE" | undefined;
@@ -294,16 +295,29 @@ async function processVariant(
         alert.type, alert.entry!, currentPrice,
         alert.stopLoss!, alert.target1!, alert.target2,
       );
-      result = lvl.result; points = lvl.points; levelHit = lvl.levelHit;
+      if (lvl.result !== "NEUTRAL") {
+        // Level hit — decisive
+        result = lvl.result; points = lvl.points; levelHit = lvl.levelHit;
+      } else if (pastMedium) {
+        // No level hit after 4h — fall back to % threshold to force a result
+        const pp = calculatePP(alert.type, alert.price, currentPrice, alert.category);
+        result = pp.result; points = pp.points; levelHit = "NONE";
+      } else {
+        result = "NEUTRAL"; points = 0;
+      }
     } else {
       const pp = calculatePP(alert.type, alert.price, currentPrice, alert.category);
       result = pp.result; points = pp.points;
     }
 
-    // NEUTRAL → keep retrying
-    if (result === "NEUTRAL") {
+    // NEUTRAL → keep retrying (only if not past medium window)
+    if (result === "NEUTRAL" && !pastMedium) {
       updatedExisting.push(alert);
       continue;
+    }
+    // Past medium window: force record even if NEUTRAL to clear the queue
+    if (result === "NEUTRAL" && pastMedium) {
+      levelHit = "NONE";
     }
 
     // Decisive result — record in memory

@@ -12,6 +12,7 @@ import type { VariantId } from "@/lib/modelVariants";
 import { AlertResultBadge } from "@/components/AlertResultBadge";
 import { PerformanceStats } from "@/components/PerformanceStats";
 import { AllTradesPanel } from "@/components/AllTradesPanel";
+import { TradeHistory } from "@/components/TradeHistory";
 import { CandlestickChart } from "@/components/CandlestickChart";
 
 // ─── Types ───────────────────────────────────────────────────
@@ -596,6 +597,17 @@ export default function PredictionDashboard() {
                   <span style={{ fontFamily: M, fontSize: 10, color: "#475569" }}>{rawAlerts.length} trades</span>
                 </div>
                 <AllTradesPanel trades={rawAlerts} />
+                {/* Trades validés depuis la mémoire (anciens WIN/LOSS) */}
+                {memory.history.length > 0 && (
+                  <div>
+                    <div style={{
+                      padding: "8px 14px", background: "#111827",
+                      borderTop: "1px solid #1C2338",
+                      fontSize: 10, color: "#475569", fontFamily: M, letterSpacing: "0.08em",
+                    }}>MÉMOIRE · {memory.history.length} validations</div>
+                    <TradeHistory memory={memory} />
+                  </div>
+                )}
               </div>
             )}
 
