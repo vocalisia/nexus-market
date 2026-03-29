@@ -128,10 +128,10 @@ export interface PerformanceMemory {
 
 // ─── Validation thresholds ───────────────────────────────────
 export const VALIDATION_THRESHOLDS: Record<AssetCategory, number> = {
-  CRYPTO:      0.004, // 0.4% — was 0.8%, lowered so more moves count as decisive
-  FOREX:       0.0015,
-  COMMODITIES: 0.005,
-  STOCKS:      0.005,
+  CRYPTO:      0.002, // 0.2% — lowered so more 1h moves count as WIN/LOSS
+  FOREX:       0.0010,
+  COMMODITIES: 0.003,
+  STOCKS:      0.003,
 };
 
 export const VALIDATION_WINDOWS_MS: Record<
