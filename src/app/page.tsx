@@ -273,12 +273,12 @@ export default function PredictionDashboard() {
   const [showAlertPanel, setShowAlertPanel] = useState(false);
 
   // Alert system
-  const { alerts, latestCritical, unreadCount, processSignals, dismissBanner, markAllRead, updateValidation } = useAlerts();
+  const { alerts, allAlerts, latestCritical, unreadCount, processSignals, dismissBanner, markAllRead, updateValidation } = useAlerts();
   const [showStatsPanel, setShowStatsPanel] = useState(false);
   const [showHistoryPanel, setShowHistoryPanel] = useState(false);
   const [showChartModal, setShowChartModal] = useState(false);
   const { memory, resetMemory, winRateTrend } = useMemory();
-  useAlertValidation({ alerts, onValidated: updateValidation });
+  useAlertValidation({ alerts: allAlerts, onValidated: updateValidation });
 
   // 24h success rate from memory history
   const rate24h = useMemo(() => {
@@ -578,6 +578,13 @@ export default function PredictionDashboard() {
                       <div key={alert.id} style={{
                         padding: "12px 16px", borderBottom: "1px solid #111827",
                         display: "flex", gap: 12, opacity: isExpired ? 0.4 : 1,
+                        cursor: "pointer",
+                      }} onClick={() => {
+                        const matched = allAssets.find((a) =>
+                          alert.asset.toLowerCase().includes(a.symbol.toLowerCase()) ||
+                          alert.asset.toLowerCase().includes(a.id.toLowerCase())
+                        );
+                        if (matched) { setSelectedAssetId(matched.id); setShowChartModal(true); }
                       }}>
                         <div style={{ width: 3, borderRadius: 2, flexShrink: 0, alignSelf: "stretch", minHeight: 40, background: barColor }} />
                         <div style={{ flex: 1 }}>

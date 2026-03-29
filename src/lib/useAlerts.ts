@@ -195,6 +195,7 @@ export function useAlerts() {
 
   return {
     alerts: activeAlerts,
+    allAlerts: alerts, // unfiltered — needed for validation (alerts expire before 4h window)
     latestCritical: latestCritical && !latestCritical.dismissedAt ? latestCritical : null,
     unreadCount,
     processSignals,
