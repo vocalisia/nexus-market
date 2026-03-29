@@ -21,7 +21,8 @@ export function useAlertValidation({ alerts, onValidated }: UseAlertValidationPr
 
       const windows = VALIDATION_WINDOWS_MS[a.category];
       const age = now - new Date(a.generatedAt).getTime();
-      return age >= windows.medium;
+      // Validate after short window (1h crypto), up to 7 days to catch overnight/weekend
+      return age >= windows.short && age <= 7 * 24 * 60 * 60 * 1000;
     });
 
     if (pendingAlerts.length === 0) return;
@@ -54,25 +55,28 @@ export function useAlertValidation({ alerts, onValidated }: UseAlertValidationPr
 
         onValidated(alert.id, validation);
 
-        // Store in memory + trigger auto-learning (non-NEUTRAL only)
-        if (result !== "NEUTRAL" && alert.indicatorsSnapshot) {
-          addAlertRecord({
-            alertId: alert.id,
-            asset: alert.asset,
-            symbol: alert.symbol,
-            category: alert.category!,
-            type: alert.type as "BUY" | "SELL",
-            severity: alert.severity,
-            priceAtSignal: alert.price,
-            priceAtValidation: currentPrice,
-            result,
-            points,
-            generatedAt: alert.generatedAt,
-            validatedAt: new Date().toISOString(),
-            windowMs: VALIDATION_WINDOWS_MS[alert.category!].medium,
-            snapshot: alert.indicatorsSnapshot,
-          });
-        }
+        // Store in memory — record all results (WIN/LOSS/NEUTRAL)
+        const defaultSnapshot = {
+          rsi: 50, adx: 0, stochRsiK: 50, macdCross: "NONE" as const,
+          bollingerPos: "INSIDE" as const, obvRising: false,
+          regime: "RANGING" as const, fearGreed: 50, aiScore: 50,
+        };
+        addAlertRecord({
+          alertId: alert.id,
+          asset: alert.asset,
+          symbol: alert.symbol,
+          category: alert.category!,
+          type: alert.type as "BUY" | "SELL",
+          severity: alert.severity,
+          priceAtSignal: alert.price,
+          priceAtValidation: currentPrice,
+          result,
+          points,
+          generatedAt: alert.generatedAt,
+          validatedAt: new Date().toISOString(),
+          windowMs: VALIDATION_WINDOWS_MS[alert.category!].short,
+          snapshot: alert.indicatorsSnapshot ?? defaultSnapshot,
+        });
       } catch {
         // Silent — will retry on next cycle
       }

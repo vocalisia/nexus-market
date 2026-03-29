@@ -2,8 +2,9 @@ import { NextRequest, NextResponse } from "next/server";
 import { promises as fs } from "fs";
 import path from "path";
 
-// Saved on disk next to the project so it survives browser clears and PC restarts
-const DATA_FILE = path.join(process.cwd(), "data", "nexus_memory.json");
+// NOTE: Vercel serverless has no persistent disk — this works only for the duration
+// of a warm instance. localStorage is the primary persistence layer.
+const DATA_FILE = path.join("/tmp", "nexus_memory.json");
 
 async function ensureDir() {
   await fs.mkdir(path.dirname(DATA_FILE), { recursive: true });
