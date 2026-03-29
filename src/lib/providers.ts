@@ -25,10 +25,10 @@ const COMMODITY_OVERRIDES: Record<string, { name: string; symbol: string; catego
   "paxos-gold": { name: "Or (Gold)", symbol: "XAU/USD", category: "COMMODITIES" },
 };
 
-// CoinGecko IDs — PAXG included for real-time gold via Binance WS
+// CoinGecko IDs — crypto only (PAXG fetched separately to guarantee delivery)
 const COINGECKO_IDS =
   "bitcoin,ethereum,solana,ripple,dogecoin,cardano,polkadot,avalanche-2," +
-  "chainlink,polygon,uniswap,litecoin,stellar,near,sui,paxos-gold";
+  "chainlink,polygon,uniswap,litecoin,stellar,near,sui";
 
 export async function fetchCoinGecko(sentiment: (id: string) => number): Promise<Asset[]> {
   const url =
@@ -64,6 +64,82 @@ export async function fetchCoinGecko(sentiment: (id: string) => number): Promise
       aiDirection: getDirection(aiScore),
     };
   });
+}
+
+// ============================================================
+// GOLD (PAXG) — dedicated fetch, always present, no rate-limit risk
+// Uses CoinGecko market_chart endpoint which is more reliable for a single coin
+// ============================================================
+
+interface CoinGeckoMarketChart {
+  prices: [number, number][];
+}
+
+interface CoinGeckoSimplePrice {
+  "paxos-gold"?: {
+    usd?: number;
+    usd_24h_change?: number;
+    usd_7d_change?: number;
+  };
+}
+
+export async function fetchGold(sentiment: (id: string) => number): Promise<Asset[]> {
+  try {
+    const [priceRes, chartRes] = await Promise.allSettled([
+      fetch(
+        "https://api.coingecko.com/api/v3/simple/price?ids=paxos-gold&vs_currencies=usd&include_24hr_change=true&include_7d_change=true",
+        { next: { revalidate: 60 } },
+      ),
+      fetch(
+        "https://api.coingecko.com/api/v3/coins/paxos-gold/market_chart?vs_currency=usd&days=7&interval=hourly",
+        { next: { revalidate: 300 } },
+      ),
+    ]);
+
+    let price = 0;
+    let change24h = 0;
+    let change7d = 0;
+
+    if (priceRes.status === "fulfilled" && priceRes.value.ok) {
+      const data = (await priceRes.value.json()) as CoinGeckoSimplePrice;
+      price     = data["paxos-gold"]?.usd ?? 0;
+      change24h = data["paxos-gold"]?.usd_24h_change ?? 0;
+      change7d  = data["paxos-gold"]?.usd_7d_change  ?? 0;
+    }
+
+    if (price === 0) return []; // CoinGecko unavailable
+
+    let sparkline: number[] = [];
+    if (chartRes.status === "fulfilled" && chartRes.value.ok) {
+      const chart = (await chartRes.value.json()) as CoinGeckoMarketChart;
+      sparkline = chart.prices.map(([, p]) => p);
+    }
+
+    // Fallback sparkline: flat line at current price (enough for RSI/BB)
+    if (sparkline.length < 10) {
+      sparkline = Array(24).fill(price);
+    }
+
+    const change1h = 0;
+    const rsi = calculateRSI(sparkline);
+    const aiScore = computeAIScore(change24h, change7d, rsi, "COMMODITIES", sentiment("paxos-gold"));
+
+    return [{
+      id: "paxos-gold",
+      name: "Or (Gold)",
+      symbol: "XAU/USD",
+      category: "COMMODITIES",
+      price,
+      change1h, change24h, change7d,
+      marketCap: 0,
+      volume: 0,
+      sparkline,
+      aiScore,
+      aiDirection: getDirection(aiScore),
+    }];
+  } catch {
+    return [];
+  }
 }
 
 // ============================================================
@@ -272,13 +348,12 @@ async function fetchTwelveDataAssets(
   return assets;
 }
 
-// Gold is now covered by CoinGecko PAXG (paxos-gold) with real-time Binance WS ticks.
-// fetchCommodities returns empty — no additional commodity sources needed.
+// fetchCommodities: returns Gold via dedicated PAXG fetch
 export async function fetchCommodities(
   _apiKey: string,
-  _sentiment: (id: string) => number,
+  sentiment: (id: string) => number,
 ): Promise<Asset[]> {
-  return [];
+  return fetchGold(sentiment);
 }
 
 export async function fetchTwelveForex(
