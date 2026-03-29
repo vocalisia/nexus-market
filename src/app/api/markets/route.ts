@@ -1,11 +1,19 @@
-import { NextResponse } from "next/server";
+import { NextResponse, type NextRequest } from "next/server";
 import type { Asset, Signal } from "@/types/market";
+import { MODEL_VARIANTS, DEFAULT_VARIANT } from "@/lib/modelVariants";
+import type { VariantId } from "@/lib/modelVariants";
+import type { SignalConfig } from "@/lib/scoring";
 import { calculateRSI, calculateADX, calculateStochRSI, computeAllIndicators } from "@/lib/indicators";
 import type { SignalIndicatorsSnapshot } from "@/types/market";
 import { computeAIScore, getDirection, generateSignal } from "@/lib/scoring";
 import { correlatePolymarket, computePolymarketSentiment } from "@/lib/correlation";
 import { computeMacroContext, getMacroAdjustment } from "@/lib/macroCorrelation";
-import { fetchCoinGecko, fetchCommodities, fetchTwelveForex, fetchPolymarket } from "@/lib/providers";
+import {
+  fetchCoinGecko, fetchCommodities, fetchTwelveForex, fetchPolymarket,
+  fetchFundingRates, fetchLongShortRatios, fetchCryptoPanic, fetchLiquidationBias,
+} from "@/lib/providers";
+import { computeSentimentAdjustment } from "@/lib/scoring";
+import type { MarketSentimentData } from "@/lib/scoring";
 import { buildTradePlan } from "@/lib/tradePlan";
 import { fetchFearGreed, fearGreedAdjustment } from "@/lib/fearGreed";
 import { detectRegime } from "@/lib/regimeDetection";
@@ -14,6 +22,7 @@ export const revalidate = 60;
 
 const AV_KEY = process.env.ALPHA_VANTAGE_API_KEY ?? "";
 const TD_KEY = process.env.TWELVE_DATA_API_KEY ?? "";
+const CRYPTOPANIC_KEY = process.env.CRYPTOPANIC_API_KEY ?? "";
 
 // ─── Alpha Vantage (stocks only, optional) ──────────────────
 
@@ -98,12 +107,42 @@ async function fetchStocks(): Promise<Asset[]> {
 
 // ─── Route Handler ──────────────────────────────────────────
 
-export async function GET() {
+export async function GET(req: NextRequest) {
+  const variant = (req.nextUrl.searchParams.get("variant") ?? DEFAULT_VARIANT) as VariantId;
+  const variantCfg = MODEL_VARIANTS[variant] ?? MODEL_VARIANTS[DEFAULT_VARIANT];
+  const signalCfg: SignalConfig = {
+    adxGate: variantCfg.adxGate,
+    minPartsForMedium: variantCfg.minPartsForMedium,
+    highOnly: variantCfg.highOnly,
+  };
+  // eslint-disable-next-line @typescript-eslint/no-unused-vars
+  void signalCfg; // used below in generateSignal calls
   try {
-    // 1. Fetch Polymarket first (needed for sentiment correlation)
+    // 1. Fetch Polymarket, Fear&Greed, and crypto microstructure data in parallel
     const pmRaw = await fetchPolymarket().catch(() => []);
     const polymarket = correlatePolymarket(pmRaw);
     const fearGreed = await fetchFearGreed();
+
+    const [fundingResult, lsResult, cpResult, liqResult] = await Promise.allSettled([
+      fetchFundingRates(),
+      fetchLongShortRatios(),
+      fetchCryptoPanic(CRYPTOPANIC_KEY),
+      fetchLiquidationBias(),
+    ]);
+    const fundingRates = fundingResult.status === "fulfilled" ? fundingResult.value : {};
+    const lsRatios    = lsResult.status === "fulfilled" ? lsResult.value : {};
+    const cpSentiment = cpResult.status === "fulfilled" ? cpResult.value : {};
+    const liqBiases   = liqResult.status === "fulfilled" ? liqResult.value : {};
+
+    const getMarketSentiment = (symbol: string): MarketSentimentData => {
+      const key = symbol.toUpperCase();
+      return {
+        fundingRate:     fundingRates[key],
+        lsRatio:         lsRatios[key],
+        newsSentiment:   cpSentiment[key],
+        liquidationBias: liqBiases[key],
+      };
+    };
 
     const sentiment = (assetId: string) => computePolymarketSentiment(assetId, polymarket);
 
@@ -131,14 +170,18 @@ export async function GET() {
       const rsi = calculateRSI(a.sparkline);
       const { adjustment } = getMacroAdjustment(a.id, macroCtx);
       const regime = detectRegime(a.sparkline);
-      const fgAdj = a.category === "CRYPTO" ? fearGreedAdjustment(fearGreed.value) : 0;
-      const adjustedScore = Math.min(100, Math.max(0, a.aiScore + adjustment + regime.scoreModifier + fgAdj));
+      const fgAdj = a.category === "CRYPTO"
+        ? fearGreedAdjustment(fearGreed.value) * variantCfg.fearGreedMult : 0;
+      const mktSentAdj = a.category === "CRYPTO"
+        ? computeSentimentAdjustment(getMarketSentiment(a.symbol)) * variantCfg.sentimentMult
+        : 0;
+      const adjustedScore = Math.min(100, Math.max(0, a.aiScore + adjustment + regime.scoreModifier + fgAdj + mktSentAdj));
       const adjustedDirection = adjustedScore > 55 ? "UP" as const : adjustedScore < 45 ? "DOWN" as const : "NEUTRAL" as const;
 
       const signal = generateSignal(
         a.name, a.symbol, rsi,
         a.change24h, a.change7d,
-        adjustedScore, adjustedDirection, a.category, a.sparkline
+        adjustedScore, adjustedDirection, a.category, a.sparkline, signalCfg
       );
 
       if (signal) {

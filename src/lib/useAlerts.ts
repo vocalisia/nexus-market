@@ -30,7 +30,8 @@ export type Freshness = "FRESH" | "WARM" | "OLD" | "EXPIRED";
 
 const STORAGE_KEY = "nexus_alerts_v2"; // bumped to discard old inverted SL/TP alerts
 const MAX_ALERTS = 100;
-const EXPIRE_MS = 60 * 60 * 1000; // 60 min
+const EXPIRE_MS = 60 * 60 * 1000;  // 60 min — display expiry
+const DEDUP_MS  = 4 * 60 * 60 * 1000; // 4h  — prevents same asset+type from re-firing
 
 export function getFreshness(generatedAt: string): Freshness {
   const age = Date.now() - new Date(generatedAt).getTime();
@@ -74,7 +75,7 @@ function isDuplicate(existing: Alert[], newAlert: { asset: string; type: string 
     (a) =>
       a.asset === newAlert.asset &&
       a.type === newAlert.type &&
-      Date.now() - new Date(a.generatedAt).getTime() < EXPIRE_MS // same asset+type within 60min = skip
+      Date.now() - new Date(a.generatedAt).getTime() < DEDUP_MS // same asset+type within 4h = skip
   );
 }
 

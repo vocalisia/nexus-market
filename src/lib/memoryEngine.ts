@@ -1,8 +1,14 @@
 import type { AssetCategory } from "@/types/market";
 
 // ─── Storage keys ────────────────────────────────────────────
-export const MEMORY_STORAGE_KEY = "nexus_memory";
+export const MEMORY_STORAGE_KEY = "nexus_memory"; // V1 legacy key
 export const MEMORY_VERSION = 1;
+
+// Active variant — set by useMemory on mount; defaults to "1"
+let _variant: string = "1";
+export function setActiveVariant(v: string): void { _variant = v; }
+export function getActiveVariant(): string { return _variant; }
+function storageKey(): string { return _variant === "1" ? MEMORY_STORAGE_KEY : `nexus_memory_v${_variant}`; }
 
 // ─── Indicator weights ───────────────────────────────────────
 export interface IndicatorWeights {
@@ -60,6 +66,12 @@ export interface AlertRecord {
   validatedAt: string;
   windowMs: number;
   snapshot: AlertIndicatorsSnapshot;
+  // TP/SL level tracking
+  entry?: number;
+  stopLoss?: number;
+  target1?: number;
+  target2?: number;
+  levelHit?: "TP2" | "TP1" | "SL" | "NONE";
 }
 
 // ─── Per-asset stats ─────────────────────────────────────────
@@ -116,7 +128,7 @@ export interface PerformanceMemory {
 
 // ─── Validation thresholds ───────────────────────────────────
 export const VALIDATION_THRESHOLDS: Record<AssetCategory, number> = {
-  CRYPTO:      0.008,
+  CRYPTO:      0.004, // 0.4% — was 0.8%, lowered so more moves count as decisive
   FOREX:       0.0015,
   COMMODITIES: 0.005,
   STOCKS:      0.005,
@@ -158,6 +170,45 @@ export function calculatePP(
     : -parseFloat(rawPoints.toFixed(2));
 
   return { points, result: directionCorrect ? "WIN" : "LOSS" };
+}
+
+// ─── Level-based PP (TP1 / TP2 / SL hit) ────────────────────
+//
+// Points are expressed in R-multiples:
+//   TP2 hit → +3 PP  (3:1 R:R)
+//   TP1 hit → +2 PP  (2:1 R:R)
+//   SL  hit → -1 PP  (risk unit)
+//   NONE    →  0 PP  (still pending)
+//
+// This makes the score comparable across all assets and timeframes.
+
+export function calculatePPFromLevels(
+  type: "BUY" | "SELL",
+  entry: number,
+  current: number,
+  stopLoss: number,
+  target1: number,
+  target2?: number,
+): { points: number; result: "WIN" | "LOSS" | "NEUTRAL"; levelHit: "TP2" | "TP1" | "SL" | "NONE" } {
+  if (entry <= 0) return { points: 0, result: "NEUTRAL", levelHit: "NONE" };
+  const isLong = type === "BUY";
+
+  const slHit  = isLong ? current <= stopLoss : current >= stopLoss;
+  const tp2Hit = target2 !== undefined
+    ? (isLong ? current >= target2 : current <= target2)
+    : false;
+  const tp1Hit = isLong ? current >= target1 : current <= target1;
+
+  if (tp2Hit && target2 !== undefined) {
+    return { points: 3, result: "WIN", levelHit: "TP2" };
+  }
+  if (tp1Hit) {
+    return { points: 2, result: "WIN", levelHit: "TP1" };
+  }
+  if (slHit) {
+    return { points: -1, result: "LOSS", levelHit: "SL" };
+  }
+  return { points: 0, result: "NEUTRAL", levelHit: "NONE" };
 }
 
 // ─── Learning phase ──────────────────────────────────────────
@@ -206,7 +257,7 @@ export function createEmptyMemory(): PerformanceMemory {
 export function loadMemory(): PerformanceMemory {
   if (typeof window === "undefined") return createEmptyMemory();
   try {
-    const raw = localStorage.getItem(MEMORY_STORAGE_KEY);
+    const raw = localStorage.getItem(storageKey());
     if (!raw) return createEmptyMemory();
     const parsed = JSON.parse(raw) as PerformanceMemory;
     if (parsed.version !== MEMORY_VERSION) return createEmptyMemory();
@@ -221,30 +272,26 @@ export function saveMemory(memory: PerformanceMemory): void {
   const trimmed = { ...memory, history: memory.history.slice(-200) };
   // 1. localStorage (fast, immediate)
   try {
-    localStorage.setItem(MEMORY_STORAGE_KEY, JSON.stringify(trimmed));
+    localStorage.setItem(storageKey(), JSON.stringify(trimmed));
   } catch {
     try {
       const lighter = { ...memory, history: memory.history.slice(-50) };
-      localStorage.setItem(MEMORY_STORAGE_KEY, JSON.stringify(lighter));
-    } catch {
-      // localStorage full — skip
-    }
+      localStorage.setItem(storageKey(), JSON.stringify(lighter));
+    } catch { /* localStorage full */ }
   }
-  // 2. Server-side JSON file (survives browser clears + PC reboots)
-  fetch("/api/memory", {
+  // 2. Upstash Redis (survives browser clears + PC reboots)
+  fetch(`/api/memory?variant=${_variant}`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(trimmed),
-  }).catch(() => {
-    // Fire-and-forget — don't block UI on network error
-  });
+  }).catch(() => { /* fire-and-forget */ });
 }
 
-export async function loadMemoryFromServer(): Promise<PerformanceMemory | null> {
+export async function loadMemoryFromServer(variant = "1"): Promise<PerformanceMemory | null> {
   try {
-    const res = await fetch("/api/memory");
+    const res = await fetch(`/api/memory?variant=${variant}`);
     if (!res.ok) return null;
-    const data = await res.json() as PerformanceMemory | null;
+    const data = (await res.json()) as PerformanceMemory | null;
     if (!data || data.version !== MEMORY_VERSION) return null;
     return data;
   } catch {
@@ -256,8 +303,11 @@ export async function loadMemoryFromServer(): Promise<PerformanceMemory | null> 
 // Imported lazily to avoid circular dependency
 import { updateWeights, checkDegradation, partialWeightReset } from "./autoLearn";
 
-export function addAlertRecord(record: AlertRecord): void {
-  const memory = loadMemory();
+// Pure function — takes existing memory, returns updated memory (no I/O)
+export function updateMemoryWithRecord(
+  memory: PerformanceMemory,
+  record: AlertRecord,
+): PerformanceMemory {
 
   const updated: PerformanceMemory = {
     ...memory,
@@ -348,5 +398,11 @@ export function addAlertRecord(record: AlertRecord): void {
   // History FIFO-200
   updated.history = [...memory.history, record].slice(-200);
 
+  return updated;
+}
+
+export function addAlertRecord(record: AlertRecord): void {
+  const memory = loadMemory();
+  const updated = updateMemoryWithRecord(memory, record);
   saveMemory(updated);
 }

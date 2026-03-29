@@ -2,22 +2,24 @@
 import { useEffect, useRef, useCallback, useState } from "react";
 
 // Binance symbol mapping: CoinGecko id → Binance symbol
+// PAXG = Paxos Gold, 1:1 with troy oz gold — real-time gold price
 const SYMBOL_MAP: Record<string, string> = {
-  bitcoin: "btcusdt",
-  ethereum: "ethusdt",
-  solana: "solusdt",
-  ripple: "xrpusdt",
-  dogecoin: "dogeusdt",
-  cardano: "adausdt",
-  polkadot: "dotusdt",
+  bitcoin:       "btcusdt",
+  ethereum:      "ethusdt",
+  solana:        "solusdt",
+  ripple:        "xrpusdt",
+  dogecoin:      "dogeusdt",
+  cardano:       "adausdt",
+  polkadot:      "dotusdt",
   "avalanche-2": "avaxusdt",
-  chainlink: "linkusdt",
-  polygon: "maticusdt",
-  uniswap: "uniusdt",
-  litecoin: "ltcusdt",
-  stellar: "xlmusdt",
-  near: "nearusdt",
-  sui: "suiusdt",
+  chainlink:     "linkusdt",
+  polygon:       "maticusdt",
+  uniswap:       "uniusdt",
+  litecoin:      "ltcusdt",
+  stellar:       "xlmusdt",
+  near:          "nearusdt",
+  sui:           "suiusdt",
+  "paxos-gold":  "paxgusdt",  // Gold real-time via PAXG token
 };
 
 export interface LivePrice {

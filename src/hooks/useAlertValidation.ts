@@ -2,14 +2,23 @@
 import { useEffect, useCallback } from "react";
 import type { Alert } from "@/lib/useAlerts";
 import type { AlertValidation } from "@/lib/memoryEngine";
-import { calculatePP, VALIDATION_WINDOWS_MS, addAlertRecord } from "@/lib/memoryEngine";
+import {
+  calculatePP, calculatePPFromLevels,
+  VALIDATION_WINDOWS_MS, addAlertRecord, setActiveVariant,
+} from "@/lib/memoryEngine";
 
 interface UseAlertValidationProps {
   alerts: Alert[];
   onValidated: (alertId: string, validation: AlertValidation) => void;
+  variant?: string;
 }
 
-export function useAlertValidation({ alerts, onValidated }: UseAlertValidationProps): void {
+export function useAlertValidation({ alerts, onValidated, variant = "1" }: UseAlertValidationProps): void {
+  // Ensure the correct variant is active before any record is written
+  useEffect(() => {
+    setActiveVariant(variant);
+  }, [variant]);
+
   const validatePending = useCallback(async () => {
     const now = Date.now();
 
@@ -38,29 +47,58 @@ export function useAlertValidation({ alerts, onValidated }: UseAlertValidationPr
         const { currentPrice } = (await res.json()) as { currentPrice: number };
         if (!currentPrice || currentPrice <= 0) continue;
 
-        const { points, result } = calculatePP(
-          alert.type as "BUY" | "SELL",
-          alert.price,
-          currentPrice,
-          alert.category!,
-        );
+        // Use level-based validation when TradePlan levels are available
+        const entryPrice = alert.entry ?? alert.price;
+        const hasLevels = entryPrice > 0 && alert.stopLoss && alert.target1;
+
+        let points: number;
+        let result: "WIN" | "LOSS" | "NEUTRAL";
+        let levelHit: "TP2" | "TP1" | "SL" | "NONE" | undefined;
+
+        if (hasLevels) {
+          const lvl = calculatePPFromLevels(
+            alert.type as "BUY" | "SELL",
+            entryPrice,
+            currentPrice,
+            alert.stopLoss!,
+            alert.target1!,
+            alert.target2,
+          );
+          points = lvl.points;
+          result = lvl.result;
+          levelHit = lvl.levelHit;
+        } else {
+          // Fallback: generic % threshold
+          const pp = calculatePP(
+            alert.type as "BUY" | "SELL",
+            alert.price,
+            currentPrice,
+            alert.category!,
+          );
+          points = pp.points;
+          result = pp.result;
+        }
 
         const validation: AlertValidation = {
           status: result,
           priceAtValidation: currentPrice,
           validatedAt: new Date().toISOString(),
           points,
-          windowUsed: "medium",
+          windowUsed: "short",
         };
 
         onValidated(alert.id, validation);
 
-        // Store in memory — record all results (WIN/LOSS/NEUTRAL)
+        // Only decisive results are stored in history (NEUTRAL = keep retrying)
+        if (result === "NEUTRAL") continue;
+
         const defaultSnapshot = {
           rsi: 50, adx: 0, stochRsiK: 50, macdCross: "NONE" as const,
           bollingerPos: "INSIDE" as const, obvRising: false,
           regime: "RANGING" as const, fearGreed: 50, aiScore: 50,
         };
+
+        setActiveVariant(variant); // re-assert variant right before saving
         addAlertRecord({
           alertId: alert.id,
           asset: alert.asset,
@@ -76,12 +114,17 @@ export function useAlertValidation({ alerts, onValidated }: UseAlertValidationPr
           validatedAt: new Date().toISOString(),
           windowMs: VALIDATION_WINDOWS_MS[alert.category!].short,
           snapshot: alert.indicatorsSnapshot ?? defaultSnapshot,
+          entry: entryPrice,
+          stopLoss: alert.stopLoss,
+          target1: alert.target1,
+          target2: alert.target2,
+          levelHit,
         });
       } catch {
         // Silent — will retry on next cycle
       }
     }
-  }, [alerts, onValidated]);
+  }, [alerts, onValidated, variant]);
 
   // Polling every 5 minutes
   useEffect(() => {

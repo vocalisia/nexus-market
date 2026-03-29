@@ -4,6 +4,50 @@ import { isMarketOpen } from "./marketHours";
 import { DEFAULT_WEIGHTS } from "./memoryEngine";
 import type { IndicatorWeights } from "./memoryEngine";
 
+// ─── Market microstructure sentiment (crypto only) ───────────
+
+export interface MarketSentimentData {
+  fundingRate?: number;     // Bybit: 0.0001 = 0.01%; positive = longs pay shorts (bearish pressure)
+  lsRatio?: number;         // Long/Short ratio; > 1 = more longs than shorts
+  newsSentiment?: number;   // CryptoPanic: 0-100, 50 = neutral
+  liquidationBias?: number; // -1 to +1: positive = more short liq (bullish), negative = more long liq
+}
+
+/**
+ * Returns a score adjustment (-15 to +15) based on crypto microstructure signals.
+ * Only applies to CRYPTO assets; call only when category === "CRYPTO".
+ */
+export function computeSentimentAdjustment(data: MarketSentimentData): number {
+  let adj = 0;
+
+  // Funding rate: positive funding = market over-leveraged long → bearish pressure
+  // 0.0001 (0.01%) → ±4 pts; 0.0002 (0.02%) → capped at ±8 pts
+  if (data.fundingRate !== undefined) {
+    const frAdj = -(data.fundingRate / 0.0001) * 4;
+    adj += Math.min(8, Math.max(-8, frAdj));
+  }
+
+  // Long/Short ratio
+  if (data.lsRatio !== undefined) {
+    if (data.lsRatio > 1.5) adj += 5;
+    else if (data.lsRatio > 1.3) adj += 3;
+    else if (data.lsRatio < 0.67) adj -= 5;
+    else if (data.lsRatio < 0.77) adj -= 3;
+  }
+
+  // News sentiment (0-100 → centered at 50 → ±5 pts max)
+  if (data.newsSentiment !== undefined) {
+    adj += (data.newsSentiment - 50) * 0.1;
+  }
+
+  // Liquidation bias (-1 to +1 → ±5 pts max)
+  if (data.liquidationBias !== undefined) {
+    adj += data.liquidationBias * 5;
+  }
+
+  return Math.min(15, Math.max(-15, adj));
+}
+
 // --- Category-specific scoring configs ---
 
 interface ScoringConfig {
@@ -107,6 +151,12 @@ const SIGNAL_THRESHOLDS: Record<AssetCategory, SignalThresholds> = {
   STOCKS:     { rsiOversold: 30, rsiOverbought: 70, rsiWarnLow: 40, rsiWarnHigh: 60, momentum24h: 2, trend7d: 10 },
 };
 
+export interface SignalConfig {
+  adxGate?: number;         // ADX below this = ranging; default 20
+  minPartsForMedium?: number; // min simultaneous parts for MEDIUM; default 2
+  highOnly?: boolean;       // only generate HIGH severity; default false
+}
+
 export function generateSignal(
   name: string,
   symbol: string,
@@ -116,8 +166,12 @@ export function generateSignal(
   score: number,
   direction: AIDirection,
   category: AssetCategory,
-  sparkline: number[] = []
+  sparkline: number[] = [],
+  cfg: SignalConfig = {},
 ): Signal | null {
+  const adxGateThreshold = cfg.adxGate ?? 20;
+  const minParts = cfg.minPartsForMedium ?? 2;
+  const highOnly = cfg.highOnly ?? false;
   // Block signals on closed markets
   const status = isMarketOpen(category);
   if (!status.isOpen) return null;
@@ -129,25 +183,25 @@ export function generateSignal(
     adx = calculateADX(sparkline, sparkline, sparkline) ?? 0;
   }
 
+  // Ranging market gate: ADX known (>0) and below threshold = flat market, no RSI signals
+  const isRanging = adx > 0 && adx < adxGateThreshold;
+
   const t = SIGNAL_THRESHOLDS[category];
   const parts: string[] = [];
   let severity: "low" | "medium" | "high" = "low";
 
-  if (rsi < t.rsiOversold && adx > 25) { parts.push("RSI oversold"); severity = "high"; }
-  else if (rsi > t.rsiOverbought && adx > 25) { parts.push("RSI overbought"); severity = "high"; }
-  else if (rsi < t.rsiWarnLow) { parts.push("RSI approaching oversold"); severity = "medium"; }
-  else if (rsi > t.rsiWarnHigh) { parts.push("RSI approaching overbought"); severity = "medium"; }
+  // RSI extremes require confirmed trend (ADX > gate threshold)
+  if (rsi < t.rsiOversold && adx > adxGateThreshold) { parts.push("RSI oversold"); severity = "high"; }
+  else if (rsi > t.rsiOverbought && adx > adxGateThreshold) { parts.push("RSI overbought"); severity = "high"; }
+  // "approaching" levels only fire in trending markets — silenced in ranging
+  else if (rsi < t.rsiWarnLow && !isRanging) { parts.push("RSI approaching oversold"); severity = "medium"; }
+  else if (rsi > t.rsiWarnHigh && !isRanging) { parts.push("RSI approaching overbought"); severity = "medium"; }
 
   if (change24h > t.momentum24h) { parts.push("momentum bullish"); if (severity === "low") severity = "medium"; }
   else if (change24h < -t.momentum24h) { parts.push("momentum bearish"); if (severity === "low") severity = "medium"; }
 
   if (change7d > t.trend7d) { parts.push("strong 7d uptrend"); severity = "high"; }
   else if (change7d < -t.trend7d) { parts.push("strong 7d downtrend"); severity = "high"; }
-
-  // Ranging market: downgrade severity if ADX is very low
-  if (adx > 0 && adx < 20 && parts.length > 0) {
-    severity = "low";
-  }
 
   // StochRSI confirmation bonus
   if (sparkline.length >= 20) {
@@ -161,7 +215,18 @@ export function generateSignal(
     }
   }
 
-  // AI Score override — Polymarket/macro can trigger signal even without technical extremes
+  // Enforce minimum parts requirement for MEDIUM signals
+  if (severity === "medium" && parts.length < minParts) {
+    parts.length = 0;
+    severity = "low";
+  }
+  // Conservative variant: discard MEDIUM signals entirely
+  if (highOnly && severity === "medium") {
+    parts.length = 0;
+    severity = "low";
+  }
+
+  // AI Score override — fires only when NO technical signal qualifies
   if (parts.length === 0) {
     if (score <= 38 && direction === "DOWN") {
       parts.push(`AI bearish conviction ${score}/100`);
@@ -175,7 +240,7 @@ export function generateSignal(
   if (parts.length === 0) return null;
 
   // Upgrade to high when ADX is strong and RSI is at an extreme
-  if (adx > 30 && (rsi < t.rsiOversold || rsi > t.rsiOverbought) && severity !== "high") {
+  if (adx > adxGateThreshold * 1.5 && (rsi < t.rsiOversold || rsi > t.rsiOverbought) && severity !== "high") {
     severity = "high";
   }
 

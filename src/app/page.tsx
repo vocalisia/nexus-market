@@ -3,13 +3,15 @@ import React, { useState, useEffect, useCallback, useMemo, useRef } from "react"
 import { computeAllIndicators, scoreIndicators, computeCombinedScore } from "@/lib/indicators";
 import type { IndicatorResult } from "@/lib/indicators";
 import { useBinanceWs } from "@/lib/useBinanceWs";
-import { useAlerts, getFreshness, getAgeText } from "@/lib/useAlerts";
+import { getFreshness, getAgeText } from "@/lib/useAlerts";
 import { isMarketOpen } from "@/lib/marketHours";
-import { useAlertValidation } from "@/hooks/useAlertValidation";
+import { useServerAlerts } from "@/hooks/useServerAlerts";
 import { useMemory } from "@/hooks/useMemory";
+import { MODEL_VARIANTS, VARIANT_URLS } from "@/lib/modelVariants";
+import type { VariantId } from "@/lib/modelVariants";
 import { AlertResultBadge } from "@/components/AlertResultBadge";
 import { PerformanceStats } from "@/components/PerformanceStats";
-import { TradeHistory } from "@/components/TradeHistory";
+import { AllTradesPanel } from "@/components/AllTradesPanel";
 import { CandlestickChart } from "@/components/CandlestickChart";
 
 // ─── Types ───────────────────────────────────────────────────
@@ -88,6 +90,20 @@ function formatVolume(value: number): string {
 
 function formatChange(change: number): string {
   return (change >= 0 ? "+" : "") + change.toFixed(2) + "%";
+}
+
+function tvUrl(symbol: string, category?: string): string {
+  const s = symbol.toUpperCase();
+  if (category === "FOREX") return `https://www.tradingview.com/chart/?symbol=FX:${s.replace("/", "")}`;
+  if (category === "COMMODITIES") {
+    const map: Record<string, string> = {
+      "XAU/USD": "TVC:GOLD", "GOLD": "TVC:GOLD",
+      "XAG/USD": "TVC:SILVER", "SILVER": "TVC:SILVER",
+      "WTI": "NYMEX:CL1!", "NATGAS": "NYMEX:NG1!",
+    };
+    return `https://www.tradingview.com/chart/?symbol=${map[s] ?? "TVC:" + s}`;
+  }
+  return `https://www.tradingview.com/chart/?symbol=BINANCE:${s}USDT`;
 }
 
 function getScoreColor(score: number): string {
@@ -272,13 +288,26 @@ export default function PredictionDashboard() {
   const [showIndicators, setShowIndicators] = useState(false);
   const [showAlertPanel, setShowAlertPanel] = useState(false);
 
-  // Alert system
-  const { alerts, allAlerts, latestCritical, unreadCount, processSignals, dismissBanner, markAllRead, updateValidation } = useAlerts();
+  // Model variant — locked by NEXT_PUBLIC_VARIANT env var (per deployment)
+  // or user-selectable via localStorage (single deployment mode)
+  const FIXED = (process.env.NEXT_PUBLIC_VARIANT ?? "") as VariantId | "";
+  const [variant, setVariantState] = useState<VariantId>(() => {
+    if (FIXED) return FIXED;
+    if (typeof window === "undefined") return "1";
+    return (localStorage.getItem("nexus_variant") ?? "1") as VariantId;
+  });
+  const setVariant = (v: VariantId) => {
+    if (FIXED) return; // locked — no switching on dedicated deployments
+    localStorage.setItem("nexus_variant", v);
+    setVariantState(v);
+  };
+
+  // Alert system — read-only from Redis (server generates + validates via cron)
+  const { alerts, rawAlerts, latestCritical, unreadCount, dismissBanner, markAllRead } = useServerAlerts(variant);
   const [showStatsPanel, setShowStatsPanel] = useState(false);
   const [showHistoryPanel, setShowHistoryPanel] = useState(false);
   const [showChartModal, setShowChartModal] = useState(false);
-  const { memory, resetMemory, winRateTrend } = useMemory();
-  useAlertValidation({ alerts: allAlerts, onValidated: updateValidation });
+  const { memory, resetMemory, winRateTrend } = useMemory(variant);
 
   // 24h success rate from memory history
   const rate24h = useMemo(() => {
@@ -293,7 +322,7 @@ export default function PredictionDashboard() {
 
   const fetchData = useCallback(async () => {
     try {
-      const res = await fetch("/api/markets");
+      const res = await fetch(`/api/markets?variant=${variant}`);
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
       const data: MarketData = await res.json();
       setMarketData(data);
@@ -302,16 +331,12 @@ export default function PredictionDashboard() {
         if (!prev && data.assets?.length > 0) return data.assets[0].id;
         return prev;
       });
-      // Process signals into alerts
-      if (data.signals?.length > 0) {
-        processSignals(data.signals, data.assets);
-      }
     } catch (err: unknown) {
       setError(err instanceof Error ? err.message : "Erreur de chargement");
     } finally {
       setLoading(false);
     }
-  }, [processSignals]);
+  }, [variant]);
 
   useEffect(() => {
     fetchData();
@@ -327,8 +352,10 @@ export default function PredictionDashboard() {
   }, []);
 
   // Live crypto prices via Binance WebSocket
-  const cryptoIds = useMemo(() => (marketData?.assets ?? []).filter((a) => a.category === "CRYPTO").map((a) => a.id), [marketData]);
-  const livePrices = useBinanceWs(cryptoIds);
+  // Pass all asset IDs — useBinanceWs internally filters to those with a Binance WS mapping
+  // This gives real-time gold prices via PAXG (paxos-gold → paxgusdt)
+  const allAssetIds = useMemo(() => (marketData?.assets ?? []).map((a) => a.id), [marketData]);
+  const livePrices = useBinanceWs(allAssetIds);
 
   // Merge live prices into assets
   const allAssets: Asset[] = useMemo(() => {
@@ -389,6 +416,54 @@ export default function PredictionDashboard() {
             <span style={{ fontFamily: R, fontWeight: 700, fontSize: 17, letterSpacing: "0.14em", color: "#F1F5F9" }}>
               NEXUS <span style={{ color: "#F59E0B" }}>MARKET</span>
             </span>
+          </div>
+
+          {/* Model variant selector */}
+          <div style={{ display: "flex", gap: 4, alignItems: "center" }}>
+            {(["1", "2", "3", "4"] as VariantId[]).map((v) => {
+              const cfg = MODEL_VARIANTS[v];
+              const active = variant === v;
+              // On dedicated deployments (FIXED set), clicking navigates to that deployment's URL
+              const handleClick = () => {
+                if (FIXED) {
+                  window.location.href = VARIANT_URLS[v];
+                } else {
+                  setVariant(v);
+                }
+              };
+              return (
+                <button
+                  key={v}
+                  onClick={handleClick}
+                  title={cfg.description}
+                  style={{
+                    padding: "3px 9px",
+                    fontSize: "10px",
+                    fontWeight: 700,
+                    letterSpacing: "0.06em",
+                    borderRadius: "4px",
+                    cursor: "pointer",
+                    border: active ? "1px solid #F59E0B" : "1px solid #1E293B",
+                    background: active ? "rgba(245,158,11,0.15)" : "transparent",
+                    color: active ? "#F59E0B" : "#475569",
+                    transition: "all 0.15s",
+                  }}
+                >
+                  V{v}
+                </button>
+              );
+            })}
+            <a
+              href="/compare"
+              style={{
+                padding: "3px 9px", fontSize: "10px", fontWeight: 700,
+                letterSpacing: "0.06em", borderRadius: "4px",
+                border: "1px solid #1E293B", color: "#475569",
+                textDecoration: "none", background: "transparent",
+              }}
+            >
+              ≡
+            </a>
           </div>
 
           {/* 24h Success Rate Circle */}
@@ -518,9 +593,9 @@ export default function PredictionDashboard() {
                   background: "#111827",
                 }}>
                   <span style={{ fontFamily: R, fontWeight: 700, fontSize: 13, letterSpacing: "0.12em", color: "#34D399" }}>HISTORIQUE TRADES</span>
-                  <span style={{ fontFamily: M, fontSize: 10, color: "#475569" }}>{memory.history.length} validations</span>
+                  <span style={{ fontFamily: M, fontSize: 10, color: "#475569" }}>{rawAlerts.length} trades</span>
                 </div>
-                <TradeHistory memory={memory} />
+                <AllTradesPanel trades={rawAlerts} />
               </div>
             )}
 
@@ -602,17 +677,63 @@ export default function PredictionDashboard() {
                               <span style={{ fontSize: 10, fontFamily: M, color: timeColor, whiteSpace: "nowrap" }}>
                                 {getAgeText(alert.generatedAt)}{isExpired ? " \u00B7 EXPIR\u00C9" : ""}
                               </span>
+                              <a
+                                href={tvUrl(alert.symbol, alert.category)}
+                                target="_blank" rel="noopener noreferrer"
+                                onClick={(e) => e.stopPropagation()}
+                                style={{
+                                  fontSize: 9, fontWeight: 700, fontFamily: M,
+                                  padding: "2px 6px", borderRadius: 3,
+                                  background: "#1C2338", color: "#475569",
+                                  textDecoration: "none", border: "1px solid #1E293B",
+                                  whiteSpace: "nowrap",
+                                }}
+                              >TV ↗</a>
                             </div>
                           </div>
                           <div style={{ fontFamily: R, fontSize: 12, color: isExpired ? "#334155" : "#64748b", marginBottom: 6 }}>
                             {isExpired ? "Signal trop ancien" : alert.message}
                           </div>
                           {!isExpired && alert.entry && (
-                            <div style={{ display: "flex", gap: 10, fontFamily: M, fontSize: 11 }}>
-                              <span><span style={{ color: "#475569" }}>Entry </span><span style={{ color: "#94a3b8" }}>${alert.entry.toLocaleString()}</span></span>
-                              {alert.stopLoss && <span><span style={{ color: "#475569" }}>SL </span><span style={{ color: "#FB7185" }}>${alert.stopLoss.toLocaleString()}</span></span>}
-                              {alert.target1 && <span><span style={{ color: "#475569" }}>T1 </span><span style={{ color: "#34D399" }}>${alert.target1.toLocaleString()}</span></span>}
-                              {alert.target2 && <span><span style={{ color: "#475569" }}>T2 </span><span style={{ color: "#34D399" }}>${alert.target2.toLocaleString()}</span></span>}
+                            <div style={{
+                              display: "flex", gap: 0, marginTop: 4, borderRadius: 5,
+                              overflow: "hidden", border: "1px solid #1C2338", fontFamily: M, fontSize: 11,
+                            }}>
+                              {/* Entry */}
+                              <div style={{ flex: 1, padding: "6px 8px", background: "#070D1B", borderRight: "1px solid #1C2338" }}>
+                                <div style={{ fontSize: 9, color: "#475569", marginBottom: 2 }}>ENTRÉE</div>
+                                <div style={{ color: "#CBD5E1", fontWeight: 700 }}>{formatPrice(alert.entry)}</div>
+                              </div>
+                              {/* SL */}
+                              {alert.stopLoss && (
+                                <div style={{ flex: 1, padding: "6px 8px", background: "#070D1B", borderRight: "1px solid #1C2338" }}>
+                                  <div style={{ fontSize: 9, color: "#FB718580", marginBottom: 2 }}>SL</div>
+                                  <div style={{ color: "#FB7185", fontWeight: 700 }}>{formatPrice(alert.stopLoss)}</div>
+                                  <div style={{ fontSize: 9, color: "#FB718560" }}>
+                                    {((alert.stopLoss - alert.entry) / alert.entry * 100).toFixed(2)}%
+                                  </div>
+                                </div>
+                              )}
+                              {/* TP1 */}
+                              {alert.target1 && (
+                                <div style={{ flex: 1, padding: "6px 8px", background: "#070D1B", borderRight: alert.target2 ? "1px solid #1C2338" : "none" }}>
+                                  <div style={{ fontSize: 9, color: "#4ade8080", marginBottom: 2 }}>TP1</div>
+                                  <div style={{ color: "#4ade80", fontWeight: 700 }}>{formatPrice(alert.target1)}</div>
+                                  <div style={{ fontSize: 9, color: "#4ade8060" }}>
+                                    +{((alert.target1 - alert.entry) / alert.entry * 100).toFixed(2)}%
+                                  </div>
+                                </div>
+                              )}
+                              {/* TP2 */}
+                              {alert.target2 && (
+                                <div style={{ flex: 1, padding: "6px 8px", background: "#070D1B" }}>
+                                  <div style={{ fontSize: 9, color: "#34D39980", marginBottom: 2 }}>TP2</div>
+                                  <div style={{ color: "#34D399", fontWeight: 700 }}>{formatPrice(alert.target2)}</div>
+                                  <div style={{ fontSize: 9, color: "#34D39960" }}>
+                                    +{((alert.target2 - alert.entry) / alert.entry * 100).toFixed(2)}%
+                                  </div>
+                                </div>
+                              )}
                             </div>
                           )}
                           {!isExpired && alert.type !== "WATCH" && (

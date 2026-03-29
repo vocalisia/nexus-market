@@ -1,5 +1,6 @@
 import type { Asset, AssetCategory } from "@/types/market";
 import { computeAIScore, getDirection } from "./scoring";
+import type { MarketSentimentData } from "./scoring";
 import { calculateRSI } from "./indicators";
 
 // ============================================================
@@ -19,14 +20,21 @@ interface CoinGeckoMarket {
   sparkline_in_7d: { price: number[] } | null;
 }
 
+// PAXG = Paxos Gold token — 1 PAXG = 1 troy oz gold, real-time price on Binance WS
+const COMMODITY_OVERRIDES: Record<string, { name: string; symbol: string; category: AssetCategory }> = {
+  "paxos-gold": { name: "Or (Gold)", symbol: "XAU/USD", category: "COMMODITIES" },
+};
+
+// CoinGecko IDs — PAXG included for real-time gold via Binance WS
+const COINGECKO_IDS =
+  "bitcoin,ethereum,solana,ripple,dogecoin,cardano,polkadot,avalanche-2," +
+  "chainlink,polygon,uniswap,litecoin,stellar,near,sui,paxos-gold";
+
 export async function fetchCoinGecko(sentiment: (id: string) => number): Promise<Asset[]> {
   const url =
     "https://api.coingecko.com/api/v3/coins/markets" +
-    "?vs_currency=usd" +
-    "&ids=bitcoin,ethereum,solana,ripple,dogecoin,cardano,polkadot,avalanche-2,chainlink,polygon,uniswap,litecoin,stellar,near,sui" +
-    "&order=market_cap_desc" +
-    "&sparkline=true" +
-    "&price_change_percentage=1h,24h,7d";
+    `?vs_currency=usd&ids=${COINGECKO_IDS}` +
+    "&order=market_cap_desc&sparkline=true&price_change_percentage=1h,24h,7d";
 
   const res = await fetch(url, { next: { revalidate: 60 } });
   if (!res.ok) return [];
@@ -34,26 +42,25 @@ export async function fetchCoinGecko(sentiment: (id: string) => number): Promise
   const data = (await res.json()) as CoinGeckoMarket[];
 
   return data.map((coin) => {
+    const override = COMMODITY_OVERRIDES[coin.id];
+    const category: AssetCategory = override?.category ?? "CRYPTO";
     const sparkline = coin.sparkline_in_7d?.price ?? [];
     const rsi = calculateRSI(sparkline);
-    const change1h = coin.price_change_percentage_1h_in_currency ?? 0;
+    const change1h  = coin.price_change_percentage_1h_in_currency  ?? 0;
     const change24h = coin.price_change_percentage_24h_in_currency ?? 0;
-    const change7d = coin.price_change_percentage_7d_in_currency ?? 0;
-    const aiScore = computeAIScore(change24h, change7d, rsi, "CRYPTO", sentiment(coin.id));
+    const change7d  = coin.price_change_percentage_7d_in_currency  ?? 0;
+    const aiScore   = computeAIScore(change24h, change7d, rsi, category, sentiment(coin.id));
 
     return {
-      id: coin.id,
-      name: coin.name,
-      symbol: coin.symbol,
-      category: "CRYPTO" as AssetCategory,
-      price: coin.current_price,
-      change1h,
-      change24h,
-      change7d,
-      marketCap: coin.market_cap,
-      volume: coin.total_volume,
-      sparkline,
-      aiScore,
+      id:          coin.id,
+      name:        override?.name   ?? coin.name,
+      symbol:      override?.symbol ?? coin.symbol.toUpperCase(),
+      category,
+      price:       coin.current_price,
+      change1h, change24h, change7d,
+      marketCap:   coin.market_cap,
+      volume:      coin.total_volume,
+      sparkline, aiScore,
       aiDirection: getDirection(aiScore),
     };
   });
@@ -196,12 +203,8 @@ interface TwelveAssetConfig {
   category: AssetCategory;
 }
 
-const TWELVE_COMMODITIES: TwelveAssetConfig[] = [
-  { id: "xau-usd", name: "Or (Gold)", symbol: "XAU/USD", tdSymbol: "XAU/USD", category: "COMMODITIES" },
-  { id: "xag-usd", name: "Argent (Silver)", symbol: "XAG/USD", tdSymbol: "XAG/USD", category: "COMMODITIES" },
-  { id: "wti-oil", name: "Petrole WTI", symbol: "WTI", tdSymbol: "CL", category: "COMMODITIES" },
-  { id: "nat-gas", name: "Gaz Naturel", symbol: "NATGAS", tdSymbol: "NG", category: "COMMODITIES" },
-];
+// All commodities removed — Gold is covered via CoinGecko PAXG (real-time Binance WS)
+const TWELVE_COMMODITIES: TwelveAssetConfig[] = [];
 
 const TWELVE_FOREX: TwelveAssetConfig[] = [
   { id: "eur-usd", name: "Euro / Dollar", symbol: "EUR/USD", tdSymbol: "EUR/USD", category: "FOREX" },
@@ -269,18 +272,23 @@ async function fetchTwelveDataAssets(
   return assets;
 }
 
+// Gold is now covered by CoinGecko PAXG (paxos-gold) with real-time Binance WS ticks.
+// fetchCommodities returns empty — no additional commodity sources needed.
 export async function fetchCommodities(
-  apiKey: string,
-  sentiment: (id: string) => number,
+  _apiKey: string,
+  _sentiment: (id: string) => number,
 ): Promise<Asset[]> {
-  return fetchTwelveDataAssets(TWELVE_COMMODITIES, apiKey, sentiment);
+  return [];
 }
 
 export async function fetchTwelveForex(
   apiKey: string,
   sentiment: (id: string) => number,
 ): Promise<Asset[]> {
-  return fetchTwelveDataAssets(TWELVE_FOREX, apiKey, sentiment);
+  // Try Twelve Data first; fall back to free Frankfurter if empty or no key
+  const tdResult = await fetchTwelveDataAssets(TWELVE_FOREX, apiKey, sentiment);
+  if (tdResult.length > 0) return tdResult;
+  return fetchForex(sentiment);
 }
 
 // ============================================================
@@ -321,6 +329,146 @@ export async function fetchMultiTimeframe(
 
   return results;
 }
+
+// ============================================================
+// BYBIT FUNDING RATES (free, no API key — all linear perps in one call)
+// ============================================================
+
+export async function fetchFundingRates(): Promise<Record<string, number>> {
+  try {
+    const res = await fetch("https://api.bybit.com/v5/market/tickers?category=linear", {
+      headers: { "User-Agent": "Mozilla/5.0" },
+      next: { revalidate: 60 },
+    });
+    if (!res.ok) return {};
+    const data = (await res.json()) as {
+      result?: { list?: Array<{ symbol: string; fundingRate: string }> };
+    };
+    const map: Record<string, number> = {};
+    for (const item of data.result?.list ?? []) {
+      if (item.symbol?.endsWith("USDT")) {
+        const base = item.symbol.replace("USDT", "");
+        map[base] = parseFloat(item.fundingRate) || 0;
+      }
+    }
+    return map;
+  } catch {
+    return {};
+  }
+}
+
+// ============================================================
+// BYBIT LONG/SHORT RATIO (free, no API key)
+// ============================================================
+
+const LS_SYMBOLS = ["BTCUSDT", "ETHUSDT", "SOLUSDT", "XRPUSDT", "DOGEUSDT"];
+
+export async function fetchLongShortRatios(): Promise<Record<string, number>> {
+  const results = await Promise.allSettled(
+    LS_SYMBOLS.map(async (sym) => {
+      const res = await fetch(
+        `https://api.bybit.com/v5/market/account-ratio?category=linear&symbol=${sym}&period=1h&limit=1`,
+        { headers: { "User-Agent": "Mozilla/5.0" }, next: { revalidate: 60 } },
+      );
+      if (!res.ok) return null;
+      const data = (await res.json()) as {
+        result?: { list?: Array<{ buyRatio: string; sellRatio: string }> };
+      };
+      const item = data.result?.list?.[0];
+      if (!item) return null;
+      const buy = parseFloat(item.buyRatio) || 0.5;
+      const sell = parseFloat(item.sellRatio) || 0.5;
+      return { key: sym.replace("USDT", ""), ratio: sell > 0 ? buy / sell : 1 };
+    }),
+  );
+  const map: Record<string, number> = {};
+  for (const r of results) {
+    if (r.status === "fulfilled" && r.value) map[r.value.key] = r.value.ratio;
+  }
+  return map;
+}
+
+// ============================================================
+// BYBIT LIQUIDATION BIAS (Coinglass-equivalent, free)
+// Buy-side liq = short positions forced to cover → bullish pressure
+// Sell-side liq = long positions forced to close → bearish pressure
+// ============================================================
+
+const LIQ_SYMBOLS = ["BTCUSDT", "ETHUSDT", "SOLUSDT", "XRPUSDT", "DOGEUSDT"];
+
+export async function fetchLiquidationBias(): Promise<Record<string, number>> {
+  const results = await Promise.allSettled(
+    LIQ_SYMBOLS.map(async (sym) => {
+      const res = await fetch(
+        `https://api.bybit.com/v5/market/liquidation?category=linear&symbol=${sym}&limit=200`,
+        { headers: { "User-Agent": "Mozilla/5.0" }, next: { revalidate: 60 } },
+      );
+      if (!res.ok) return null;
+      const data = (await res.json()) as {
+        result?: { list?: Array<{ side: string; size: string }> };
+      };
+      const list = data.result?.list ?? [];
+      let buyLiq = 0;
+      let sellLiq = 0;
+      for (const item of list) {
+        const size = parseFloat(item.size) || 0;
+        if (item.side === "Buy") buyLiq += size;
+        else sellLiq += size;
+      }
+      const total = buyLiq + sellLiq;
+      if (total === 0) return null;
+      return { key: sym.replace("USDT", ""), bias: (buyLiq - sellLiq) / total };
+    }),
+  );
+  const map: Record<string, number> = {};
+  for (const r of results) {
+    if (r.status === "fulfilled" && r.value) map[r.value.key] = r.value.bias;
+  }
+  return map;
+}
+
+// ============================================================
+// CRYPTOPANIC NEWS SENTIMENT (free with API key)
+// ============================================================
+
+const CP_CURRENCIES = "BTC,ETH,SOL,XRP,DOGE,ADA,DOT,AVAX,LINK,MATIC,UNI,LTC,XLM,NEAR,SUI";
+
+export async function fetchCryptoPanic(apiKey: string): Promise<Record<string, number>> {
+  if (!apiKey) return {};
+  try {
+    const url = `https://cryptopanic.com/api/v1/posts/?auth_token=${apiKey}&currencies=${CP_CURRENCIES}&filter=hot&public=true`;
+    const res = await fetch(url, { next: { revalidate: 60 } });
+    if (!res.ok) return {};
+    const data = (await res.json()) as {
+      results?: Array<{
+        currencies?: Array<{ code: string }>;
+        votes?: { positive: number; negative: number; liked: number; disliked: number; important: number };
+      }>;
+    };
+    const posCount: Record<string, number> = {};
+    const total: Record<string, number> = {};
+    for (const post of data.results ?? []) {
+      const v = post.votes;
+      const pos = (v?.liked ?? 0) + (v?.important ?? 0) + (v?.positive ?? 0);
+      const neg = (v?.disliked ?? 0) + (v?.negative ?? 0);
+      const isPositive = pos > neg;
+      for (const cur of post.currencies ?? []) {
+        total[cur.code] = (total[cur.code] ?? 0) + 1;
+        if (isPositive) posCount[cur.code] = (posCount[cur.code] ?? 0) + 1;
+      }
+    }
+    const map: Record<string, number> = {};
+    for (const [code, tot] of Object.entries(total)) {
+      map[code] = Math.round(((posCount[code] ?? 0) / tot) * 100);
+    }
+    return map;
+  } catch {
+    return {};
+  }
+}
+
+// Re-export MarketSentimentData so route.ts can import from one place
+export type { MarketSentimentData };
 
 // ============================================================
 // POLYMARKET PROVIDER (free, no API key)
