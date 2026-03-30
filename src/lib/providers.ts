@@ -279,8 +279,11 @@ interface TwelveAssetConfig {
   category: AssetCategory;
 }
 
-// All commodities removed — Gold is covered via CoinGecko PAXG (real-time Binance WS)
-const TWELVE_COMMODITIES: TwelveAssetConfig[] = [];
+// Silver + Oil via Twelve Data — Gold is covered separately via CoinGecko PAXG
+const TWELVE_COMMODITIES: TwelveAssetConfig[] = [
+  { id: "silver",    name: "Argent (Silver)", symbol: "XAG/USD", tdSymbol: "XAG/USD", category: "COMMODITIES" },
+  { id: "crude-oil", name: "Pétrole (WTI)",   symbol: "WTI/USD", tdSymbol: "WTI/USD", category: "COMMODITIES" },
+];
 
 const TWELVE_FOREX: TwelveAssetConfig[] = [
   { id: "eur-usd", name: "Euro / Dollar", symbol: "EUR/USD", tdSymbol: "EUR/USD", category: "FOREX" },
@@ -348,12 +351,18 @@ async function fetchTwelveDataAssets(
   return assets;
 }
 
-// fetchCommodities: returns Gold via dedicated PAXG fetch
+// fetchCommodities: Gold (CoinGecko PAXG) + Silver/Oil (Twelve Data)
 export async function fetchCommodities(
-  _apiKey: string,
+  apiKey: string,
   sentiment: (id: string) => number,
 ): Promise<Asset[]> {
-  return fetchGold(sentiment);
+  const [goldResult, tdResult] = await Promise.allSettled([
+    fetchGold(sentiment),
+    fetchTwelveDataAssets(TWELVE_COMMODITIES, apiKey, sentiment),
+  ]);
+  const gold = goldResult.status === "fulfilled" ? goldResult.value : [];
+  const td   = tdResult.status === "fulfilled"   ? tdResult.value   : [];
+  return [...gold, ...td];
 }
 
 export async function fetchTwelveForex(

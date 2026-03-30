@@ -289,18 +289,22 @@ export default function PredictionDashboard() {
   const [showIndicators, setShowIndicators] = useState(false);
   const [showAlertPanel, setShowAlertPanel] = useState(false);
 
-  // Model variant — locked by NEXT_PUBLIC_VARIANT env var (per deployment)
-  // or user-selectable via localStorage (single deployment mode)
+  // Model variant — readable from ?variant=X URL param, falls back to localStorage/env
   const FIXED = (process.env.NEXT_PUBLIC_VARIANT ?? "") as VariantId | "";
   const [variant, setVariantState] = useState<VariantId>(() => {
-    if (FIXED) return FIXED;
+    if (typeof window !== "undefined") {
+      const urlV = new URLSearchParams(window.location.search).get("variant");
+      if (urlV && (["1", "2", "3", "4"] as string[]).includes(urlV)) return urlV as VariantId;
+    }
+    if (FIXED && (["1", "2", "3", "4"] as string[]).includes(FIXED)) return FIXED;
     if (typeof window === "undefined") return "1";
     return (localStorage.getItem("nexus_variant") ?? "1") as VariantId;
   });
   const setVariant = (v: VariantId) => {
-    if (FIXED) return; // locked — no switching on dedicated deployments
-    localStorage.setItem("nexus_variant", v);
-    setVariantState(v);
+    // Navigate via URL param — works on any deployment without separate redirects
+    const url = new URL(window.location.href);
+    url.searchParams.set("variant", v);
+    window.location.href = url.toString();
   };
 
   // Alert system — read-only from Redis (server generates + validates via cron)
@@ -424,14 +428,7 @@ export default function PredictionDashboard() {
             {(["1", "2", "3", "4"] as VariantId[]).map((v) => {
               const cfg = MODEL_VARIANTS[v];
               const active = variant === v;
-              // On dedicated deployments (FIXED set), clicking navigates to that deployment's URL
-              const handleClick = () => {
-                if (FIXED) {
-                  window.location.href = VARIANT_URLS[v];
-                } else {
-                  setVariant(v);
-                }
-              };
+              const handleClick = () => setVariant(v);
               return (
                 <button
                   key={v}
