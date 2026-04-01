@@ -8,6 +8,8 @@ import type { SignalIndicatorsSnapshot } from "@/types/market";
 import { computeAIScore, getDirection, generateSignal } from "@/lib/scoring";
 import { correlatePolymarket, computePolymarketSentiment } from "@/lib/correlation";
 import { computeMacroContext, getMacroAdjustment } from "@/lib/macroCorrelation";
+import { DEFAULT_WEIGHTS } from "@/lib/memoryEngine";
+import type { IndicatorWeights } from "@/lib/memoryEngine";
 import {
   fetchCoinGecko, fetchCommodities, fetchTwelveForex, fetchPolymarket,
   fetchFundingRates, fetchLongShortRatios, fetchCryptoPanic, fetchLiquidationBias,
@@ -23,6 +25,27 @@ export const revalidate = 60;
 const AV_KEY = process.env.ALPHA_VANTAGE_API_KEY ?? "";
 const TD_KEY = process.env.TWELVE_DATA_API_KEY ?? "";
 const CRYPTOPANIC_KEY = process.env.CRYPTOPANIC_API_KEY ?? "";
+
+// ─── Redis (Upstash) — load learned weights ─────────────────
+const REDIS_URL   = (process.env.UPSTASH_REDIS_REST_URL  ?? "").replace(/\/$/, "");
+const REDIS_TOKEN = process.env.UPSTASH_REDIS_REST_TOKEN ?? "";
+
+async function loadLearnedWeights(variant: VariantId): Promise<IndicatorWeights> {
+  if (!REDIS_URL || !REDIS_TOKEN) return DEFAULT_WEIGHTS;
+  try {
+    const key = `nexus_memory_v${variant}`;
+    const res = await fetch(`${REDIS_URL}/get/${key}`, {
+      headers: { Authorization: `Bearer ${REDIS_TOKEN}` },
+      cache: "no-store",
+    });
+    const json = await res.json() as { result: string | null };
+    if (!json.result) return DEFAULT_WEIGHTS;
+    const mem = JSON.parse(json.result) as { weights?: IndicatorWeights };
+    return mem?.weights ?? DEFAULT_WEIGHTS;
+  } catch {
+    return DEFAULT_WEIGHTS;
+  }
+}
 
 // ─── Alpha Vantage (stocks only, optional) ──────────────────
 
@@ -118,6 +141,9 @@ export async function GET(req: NextRequest) {
   // eslint-disable-next-line @typescript-eslint/no-unused-vars
   void signalCfg; // used below in generateSignal calls
   try {
+    // 0. Load learned indicator weights from Redis (ML feedback loop)
+    const learnedWeights = await loadLearnedWeights(variant);
+
     // 1. Fetch Polymarket, Fear&Greed, and crypto microstructure data in parallel
     const pmRaw = await fetchPolymarket().catch(() => []);
     const polymarket = correlatePolymarket(pmRaw);
@@ -164,10 +190,20 @@ export async function GET(req: NextRequest) {
     // 3. Macro correlation context
     const macroCtx = computeMacroContext(allAssets);
 
-    // 4. Apply macro adjustments + generate signals
+    // 4. Apply macro adjustments + generate signals (using learned indicator weights)
     const signals: Signal[] = [];
     const assetsWithPlans: Asset[] = allAssets.map((a) => {
       const rsi = calculateRSI(a.sparkline);
+      const adxVal = calculateADX(a.sparkline, a.sparkline, a.sparkline) ?? 0;
+      const stoch = calculateStochRSI(a.sparkline);
+      const stochK = stoch?.k ?? 50;
+
+      // Re-score with learned weights from Redis (ML feedback loop)
+      const learnedScore = computeAIScore(
+        a.change24h, a.change7d, rsi, a.category,
+        sentiment(a.id), adxVal, stochK, learnedWeights,
+      );
+
       const { adjustment } = getMacroAdjustment(a.id, macroCtx);
       const regime = detectRegime(a.sparkline);
       const fgAdj = a.category === "CRYPTO"
@@ -175,7 +211,7 @@ export async function GET(req: NextRequest) {
       const mktSentAdj = a.category === "CRYPTO"
         ? computeSentimentAdjustment(getMarketSentiment(a.symbol)) * variantCfg.sentimentMult
         : 0;
-      const adjustedScore = Math.min(100, Math.max(0, a.aiScore + adjustment + regime.scoreModifier + fgAdj + mktSentAdj));
+      const adjustedScore = Math.min(100, Math.max(0, learnedScore + adjustment + regime.scoreModifier + fgAdj + mktSentAdj));
       const adjustedDirection = adjustedScore > 55 ? "UP" as const : adjustedScore < 45 ? "DOWN" as const : "NEUTRAL" as const;
 
       const signal = generateSignal(
@@ -185,14 +221,12 @@ export async function GET(req: NextRequest) {
       );
 
       if (signal) {
-        // Build indicators snapshot for auto-validation
+        // Build indicators snapshot for auto-validation (reuse adxVal/stochK computed above)
         const ind = computeAllIndicators(a.sparkline);
-        const adxVal = calculateADX(a.sparkline, a.sparkline, a.sparkline) ?? 0;
-        const stoch = calculateStochRSI(a.sparkline);
         const snapshot: SignalIndicatorsSnapshot = {
           rsi,
           adx: adxVal,
-          stochRsiK: stoch?.k ?? 50,
+          stochRsiK: stochK,
           macdCross: ind.macd.cross,
           bollingerPos: ind.bollinger.position,
           obvRising: ind.obv.rising,
