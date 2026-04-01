@@ -71,9 +71,10 @@ function StatusBadge({ status }: { status: StoredAlert["status"] }) {
 function LevelBadge({ level }: { level?: StoredAlert["levelHit"] }) {
   if (!level || level === "NONE") return null;
   const cfg = {
-    TP2: { color: "#34D399", label: "TP2 atteint" },
-    TP1: { color: "#4ade80", label: "TP1 atteint" },
-    SL:  { color: "#FB7185", label: "SL touché"   },
+    TP2: { color: "#34D399", label: "TP2 — +3R" },
+    TP1: { color: "#4ade80", label: "TP1 — +2R" },
+    BE:  { color: "#60A5FA", label: "BE  — +1R" },
+    SL:  { color: "#FB7185", label: "SL  — -1R" },
   }[level];
   return <span style={{ fontSize: 10, color: cfg.color, fontWeight: 600 }}>{cfg.label}</span>;
 }

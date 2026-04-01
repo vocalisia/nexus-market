@@ -1,6 +1,6 @@
 "use client";
 import { useMemo } from "react";
-import type { PerformanceMemory } from "@/lib/memoryEngine";
+import type { PerformanceMemory, LevelStats } from "@/lib/memoryEngine";
 import { computeAnalytics } from "@/lib/analytics";
 
 interface PerformanceStatsProps {
@@ -391,6 +391,51 @@ export function PerformanceStats({ memory, onReset, winRateTrend }: PerformanceS
           </div>
         </div>
       )}
+
+      {/* ── Level stats TP1 / TP2 / BE / SL ── */}
+      {(() => {
+        const ls: LevelStats = memory.levelStats ?? { tp2: 0, tp1: 0, be: 0, sl: 0, none: 0 };
+        const total = ls.tp2 + ls.tp1 + ls.be + ls.sl + ls.none;
+        if (total === 0) return null;
+        const pct = (n: number) => total > 0 ? Math.round((n / total) * 100) : 0;
+        const rows: { label: string; n: number; color: string; pts: string; desc: string }[] = [
+          { label: "TP2", n: ls.tp2, color: "#34D399", pts: "+3R", desc: "Objectif 2 atteint" },
+          { label: "TP1", n: ls.tp1, color: "#4ade80", pts: "+2R", desc: "Objectif 1 atteint" },
+          { label: "BE",  n: ls.be,  color: "#60A5FA", pts: "+1R", desc: "Sorti au Break Even" },
+          { label: "SL",  n: ls.sl,  color: "#FB7185", pts: "-1R", desc: "Stop Loss touché" },
+          { label: "—",   n: ls.none,color: "#334155", pts:  "0R", desc: "Expiré sans niveau" },
+        ];
+        return (
+          <div style={{ marginBottom: "14px" }}>
+            <SectionTitle>NIVEAUX TOUCHÉS (KLINES RÉELLES)</SectionTitle>
+            <div style={{
+              background: "rgba(15,23,42,0.6)", border: "1px solid #1E293B",
+              borderRadius: "8px", overflow: "hidden",
+            }}>
+              {rows.map(({ label, n, color, pts, desc }) => n > 0 && (
+                <div key={label} style={{
+                  display: "flex", alignItems: "center", gap: "10px",
+                  padding: "8px 12px", borderBottom: "1px solid #0F172A",
+                }}>
+                  <span style={{
+                    fontSize: 11, fontWeight: 700, color,
+                    background: `${color}20`, border: `1px solid ${color}40`,
+                    padding: "2px 8px", borderRadius: 3, minWidth: 32, textAlign: "center",
+                  }}>{label}</span>
+                  <span style={{ fontSize: 10, color: "#64748B", flex: 1 }}>{desc}</span>
+                  <span style={{ fontSize: 11, fontWeight: 700, color, minWidth: 28 }}>{pts}</span>
+                  <div style={{ width: 80, height: 4, background: "#1E293B", borderRadius: 2, overflow: "hidden" }}>
+                    <div style={{ width: `${pct(n)}%`, height: "100%", background: color, borderRadius: 2 }} />
+                  </div>
+                  <span style={{ fontSize: 11, color: "#94A3B8", minWidth: 40, textAlign: "right" }}>
+                    {n}x ({pct(n)}%)
+                  </span>
+                </div>
+              ))}
+            </div>
+          </div>
+        );
+      })()}
 
       {/* ── Top assets ── */}
       {topAssets.length > 0 && (

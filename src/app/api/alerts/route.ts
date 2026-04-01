@@ -26,7 +26,7 @@ export interface StoredAlert {
   validatedAt?: string;
   validationPrice?: number;
   points?: number;
-  levelHit?: "TP2" | "TP1" | "SL" | "NONE";
+  levelHit?: "TP2" | "TP1" | "BE" | "SL" | "NONE";
   indicatorsSnapshot?: AlertIndicatorsSnapshot;
 }
 
@@ -79,7 +79,7 @@ export async function POST(req: NextRequest) {
   const variant = (req.nextUrl.searchParams.get("variant") ?? "1") as VariantId;
   try {
     const alerts = await req.json() as StoredAlert[];
-    await redisSet(alertKey(variant), JSON.stringify(alerts.slice(-100)));
+    await redisSet(alertKey(variant), JSON.stringify(alerts.slice(-1000)));
     return NextResponse.json({ saved: true });
   } catch {
     return NextResponse.json({ saved: false }, { status: 500 });

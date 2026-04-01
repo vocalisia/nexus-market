@@ -50,12 +50,13 @@ function tvUrl(symbol: string, category: string): string {
 
 // ─── Level Badge ──────────────────────────────────────────────
 
-function LevelBadge({ level }: { level?: "TP2" | "TP1" | "SL" | "NONE" }) {
+function LevelBadge({ level }: { level?: "TP2" | "TP1" | "BE" | "SL" | "NONE" }) {
   if (!level || level === "NONE") return null;
   const cfg = {
-    TP2: { bg: "#34D39920", color: "#34D399", label: "TP2 ✅" },
-    TP1: { bg: "#4ade8020", color: "#4ade80", label: "TP1 ✅" },
-    SL:  { bg: "#FB718520", color: "#FB7185", label: "SL ❌"  },
+    TP2: { bg: "#34D39920", color: "#34D399", label: "TP2 — +3R" },
+    TP1: { bg: "#4ade8020", color: "#4ade80", label: "TP1 — +2R" },
+    BE:  { bg: "#60A5FA20", color: "#60A5FA", label: "BE — +1R"  },
+    SL:  { bg: "#FB718520", color: "#FB7185", label: "SL — -1R"  },
   }[level];
   return (
     <span style={{

@@ -71,7 +71,16 @@ export interface AlertRecord {
   stopLoss?: number;
   target1?: number;
   target2?: number;
-  levelHit?: "TP2" | "TP1" | "SL" | "NONE";
+  levelHit?: "TP2" | "TP1" | "BE" | "SL" | "NONE";
+  // Kline-based precision tracking
+  tp1Price?: number;       // prix exact où TP1 a été touché
+  tp2Price?: number;       // prix exact où TP2 a été touché
+  bePrice?: number;        // prix exact où BE a été touché (après TP1)
+  slPrice?: number;        // prix exact où SL a été touché
+  tp1TouchedAt?: string;   // ISO timestamp quand TP1 touché
+  tp2TouchedAt?: string;
+  beTouchedAt?: string;
+  slTouchedAt?: string;
 }
 
 // ─── Per-asset stats ─────────────────────────────────────────
@@ -98,6 +107,14 @@ export interface RegimeStats {
 }
 
 // ─── Main performance memory ─────────────────────────────────
+export interface LevelStats {
+  tp2: number;   // nb fois TP2 atteint
+  tp1: number;   // nb fois TP1 atteint (mais pas TP2)
+  be: number;    // nb fois sorti au BE (TP1 touché puis revenu à entry)
+  sl: number;    // nb fois SL touché
+  none: number;  // trade expiré sans niveau touché
+}
+
 export interface PerformanceMemory {
   version: number;
   totalValidated: number;
@@ -121,6 +138,7 @@ export interface PerformanceMemory {
     MEDIUM: { wins: number; losses: number; winRate: number };
     LOW: { wins: number; losses: number; winRate: number };
   };
+  levelStats: LevelStats;
   history: AlertRecord[];
   lastUpdated: string;
   degradationStreak: number;
@@ -189,7 +207,7 @@ export function calculatePPFromLevels(
   stopLoss: number,
   target1: number,
   target2?: number,
-): { points: number; result: "WIN" | "LOSS" | "NEUTRAL"; levelHit: "TP2" | "TP1" | "SL" | "NONE" } {
+): { points: number; result: "WIN" | "LOSS" | "NEUTRAL"; levelHit: "TP2" | "TP1" | "BE" | "SL" | "NONE" } {
   if (entry <= 0) return { points: 0, result: "NEUTRAL", levelHit: "NONE" };
   const isLong = type === "BUY";
 
@@ -209,6 +227,120 @@ export function calculatePPFromLevels(
     return { points: -1, result: "LOSS", levelHit: "SL" };
   }
   return { points: 0, result: "NEUTRAL", levelHit: "NONE" };
+}
+
+// ─── Kline-based simulation (séquentielle, candle par candle) ────
+// Simule exactement: SL → TP1 → BE → TP2, dans l'ordre chronologique
+// Retourne le résultat précis avec les prix et timestamps de chaque niveau touché
+
+export interface KlineValidationResult {
+  result: "WIN" | "LOSS" | "NEUTRAL";
+  points: number;
+  levelHit: "TP2" | "TP1" | "BE" | "SL" | "NONE";
+  tp1Price?: number;
+  tp2Price?: number;
+  bePrice?: number;
+  slPrice?: number;
+  tp1TouchedAt?: string;
+  tp2TouchedAt?: string;
+  beTouchedAt?: string;
+  slTouchedAt?: string;
+}
+
+export function validateWithKlines(
+  type: "BUY" | "SELL",
+  entry: number,
+  stopLoss: number,
+  target1: number,
+  target2: number | undefined,
+  candles: { time: number; high: number; low: number }[],
+): KlineValidationResult {
+  if (entry <= 0 || candles.length === 0) {
+    return { result: "NEUTRAL", points: 0, levelHit: "NONE" };
+  }
+
+  const isLong = type === "BUY";
+  let tp1Touched = false;
+  let result: KlineValidationResult = { result: "NEUTRAL", points: 0, levelHit: "NONE" };
+
+  for (const candle of candles) {
+    const high = candle.high;
+    const low  = candle.low;
+    const ts   = new Date(candle.time).toISOString();
+
+    if (!tp1Touched) {
+      // Phase 1 : on cherche SL ou TP1
+      // Convention : dans une même candle, SL est évalué en premier (pire cas)
+      const slHit  = isLong ? low  <= stopLoss : high >= stopLoss;
+      const tp1Hit = isLong ? high >= target1  : low  <= target1;
+
+      if (slHit && !tp1Hit) {
+        // SL touché avant TP1
+        return {
+          result: "LOSS", points: -1, levelHit: "SL",
+          slPrice: stopLoss, slTouchedAt: ts,
+        };
+      }
+
+      if (tp1Hit) {
+        // TP1 atteint → SL passe à BE (entry)
+        tp1Touched = true;
+        result = {
+          result: "WIN", points: 2, levelHit: "TP1",
+          tp1Price: target1, tp1TouchedAt: ts,
+        };
+
+        // Dans la même candle : TP2 possible ?
+        if (target2 !== undefined) {
+          const tp2Hit = isLong ? high >= target2 : low <= target2;
+          if (tp2Hit) {
+            return {
+              ...result,
+              result: "WIN", points: 3, levelHit: "TP2",
+              tp2Price: target2, tp2TouchedAt: ts,
+            };
+          }
+        }
+        // Dans la même candle : BE touché après TP1 ?
+        const beHit = isLong ? low <= entry : high >= entry;
+        if (beHit && target2 === undefined) {
+          return {
+            ...result,
+            result: "WIN", points: 1, levelHit: "BE",
+            bePrice: entry, beTouchedAt: ts,
+          };
+        }
+        continue;
+      }
+
+    } else {
+      // Phase 2 : TP1 déjà touché, SL maintenant à BE (entry)
+      const beHit  = isLong ? low  <= entry   : high >= entry;
+      const tp2Hit = target2 !== undefined
+        ? (isLong ? high >= target2 : low <= target2)
+        : false;
+
+      if (tp2Hit && target2 !== undefined) {
+        return {
+          ...result,
+          result: "WIN", points: 3, levelHit: "TP2",
+          tp2Price: target2, tp2TouchedAt: ts,
+        };
+      }
+
+      if (beHit) {
+        // Sorti au BE : +1R (on a pris la moitié à TP1 en théorie, ou simplement 0 perte)
+        return {
+          ...result,
+          result: "WIN", points: 1, levelHit: "BE",
+          bePrice: entry, beTouchedAt: ts,
+        };
+      }
+    }
+  }
+
+  // Fin des candles sans résolution
+  return result; // NEUTRAL si TP1 jamais touché, ou WIN +2R si TP1 touché mais TP2/BE pas encore
 }
 
 // ─── Learning phase ──────────────────────────────────────────
@@ -248,6 +380,7 @@ export function createEmptyMemory(): PerformanceMemory {
       MEDIUM: { wins: 0, losses: 0, winRate: 0 },
       LOW:    { wins: 0, losses: 0, winRate: 0 },
     },
+    levelStats: { tp2: 0, tp1: 0, be: 0, sl: 0, none: 0 },
     history: [],
     lastUpdated: new Date().toISOString(),
     degradationStreak: 0,
@@ -269,7 +402,7 @@ export function loadMemory(): PerformanceMemory {
 
 export function saveMemory(memory: PerformanceMemory): void {
   if (typeof window === "undefined") return;
-  const trimmed = { ...memory, history: memory.history.slice(-200) };
+  const trimmed = { ...memory, history: memory.history.slice(-1000) };
   // 1. localStorage (fast, immediate)
   try {
     localStorage.setItem(storageKey(), JSON.stringify(trimmed));
@@ -366,6 +499,17 @@ export function updateMemoryWithRecord(
     ? Math.round((updatedRegime.wins / regimeDecisive) * 100) : 0;
   updated.byRegime = { ...memory.byRegime, [regime]: updatedRegime };
 
+  // Level stats
+  const prevLevel = memory.levelStats ?? { tp2: 0, tp1: 0, be: 0, sl: 0, none: 0 };
+  const lh = record.levelHit ?? "NONE";
+  updated.levelStats = {
+    tp2:  lh === "TP2" ? prevLevel.tp2 + 1 : prevLevel.tp2,
+    tp1:  lh === "TP1" ? prevLevel.tp1 + 1 : prevLevel.tp1,
+    be:   lh === "BE"  ? prevLevel.be  + 1 : prevLevel.be,
+    sl:   lh === "SL"  ? prevLevel.sl  + 1 : prevLevel.sl,
+    none: lh === "NONE"? prevLevel.none + 1 : prevLevel.none,
+  };
+
   // Per-severity stats
   const sev = record.severity;
   const prevSev = memory.bySeverity[sev];
@@ -395,8 +539,8 @@ export function updateMemoryWithRecord(
     updated.lastWeightUpdate = new Date().toISOString();
   }
 
-  // History FIFO-200
-  updated.history = [...memory.history, record].slice(-200);
+  // History FIFO-1000 (90 jours de trades conserves)
+  updated.history = [...memory.history, record].slice(-1000);
 
   return updated;
 }

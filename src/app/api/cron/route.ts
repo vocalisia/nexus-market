@@ -15,8 +15,9 @@ import { NextResponse } from "next/server";
 import type { Asset } from "@/types/market";
 import type { VariantId } from "@/lib/modelVariants";
 import { MODEL_VARIANTS } from "@/lib/modelVariants";
-import type { AlertIndicatorsSnapshot } from "@/lib/memoryEngine";
-import { calculatePP, calculatePPFromLevels, VALIDATION_WINDOWS_MS } from "@/lib/memoryEngine";
+import type { AlertIndicatorsSnapshot, KlineValidationResult } from "@/lib/memoryEngine";
+import { calculatePP, VALIDATION_WINDOWS_MS, validateWithKlines } from "@/lib/memoryEngine";
+import type { Candle } from "@/app/api/klines/route";
 import { addAlertRecordServer, loadMemoryServer } from "@/lib/serverMemory";
 import { generateSignal, computeSentimentAdjustment } from "@/lib/scoring";
 import type { SignalConfig } from "@/lib/scoring";
@@ -78,7 +79,7 @@ async function loadAlerts(v: VariantId): Promise<StoredAlert[]> {
 }
 
 async function saveAlerts(v: VariantId, alerts: StoredAlert[]): Promise<void> {
-  await redisSet(alertKey(v), JSON.stringify(alerts.slice(-100)));
+  await redisSet(alertKey(v), JSON.stringify(alerts.slice(-1000)));
 }
 
 // ─── Current price fetch (for validation) ─────────────────────
@@ -134,6 +135,79 @@ async function fetchCurrentPrice(symbol: string, category: string): Promise<numb
     }
     return null;
   } catch { return null; }
+}
+
+// ─── Klines fetch for validation ─────────────────────────────
+// Récupère les candles 1h depuis le signal jusqu'à maintenant
+
+async function fetchKlinesForValidation(
+  symbol: string,
+  category: string,
+  fromMs: number,
+): Promise<Candle[]> {
+  try {
+    const BASE = "https://prediction-dashboard-one.vercel.app";
+
+    if (category === "CRYPTO") {
+      // OKX → Bybit → Binance en fallback
+      const okxSym: Record<string, string> = {
+        BTC: "BTC-USDT", ETH: "ETH-USDT", SOL: "SOL-USDT", XRP: "XRP-USDT",
+        DOGE: "DOGE-USDT", ADA: "ADA-USDT", DOT: "DOT-USDT", AVAX: "AVAX-USDT",
+        LINK: "LINK-USDT", MATIC: "MATIC-USDT", UNI: "UNI-USDT", LTC: "LTC-USDT",
+        XLM: "XLM-USDT", NEAR: "NEAR-USDT", SUI: "SUI-USDT",
+      };
+      const sym = okxSym[symbol.toUpperCase()];
+      if (!sym) return [];
+
+      // Calcule combien de candles 1h il faut (depuis le signal)
+      const hoursNeeded = Math.min(168, Math.ceil((Date.now() - fromMs) / 3_600_000) + 2);
+
+      const res = await fetch(
+        `https://www.okx.com/api/v5/market/candles?instId=${sym}&bar=1H&limit=${hoursNeeded}`,
+        { cache: "no-store", signal: AbortSignal.timeout(6000) },
+      );
+      if (!res.ok) throw new Error(`OKX ${res.status}`);
+      const data = await res.json() as { code: string; data: string[][] };
+      if (data.code !== "0") throw new Error("OKX error");
+
+      return data.data.reverse()
+        .map(([t, o, h, l, c, v]) => ({
+          time: parseInt(t), open: parseFloat(o), high: parseFloat(h),
+          low: parseFloat(l), close: parseFloat(c), volume: parseFloat(v),
+        }))
+        .filter((c) => c.time >= fromMs);
+    }
+
+    if (category === "FOREX") {
+      const tdMap: Record<string, string> = {
+        "EUR/USD": "EUR/USD", "GBP/USD": "GBP/USD",
+        "USD/JPY": "USD/JPY", "USD/CHF": "USD/CHF",
+      };
+      const tdSym = tdMap[symbol];
+      if (!tdSym || !TD_KEY) return [];
+
+      const res = await fetch(
+        `https://api.twelvedata.com/time_series?symbol=${tdSym}&interval=1h&outputsize=120&apikey=${TD_KEY}&format=JSON`,
+        { cache: "no-store", signal: AbortSignal.timeout(6000) },
+      );
+      if (!res.ok) return [];
+      const data = await res.json() as { values?: { datetime: string; high: string; low: string; open: string; close: string }[] };
+      if (!data.values) return [];
+
+      return data.values.reverse()
+        .map((b) => ({
+          time: new Date(b.datetime).getTime(),
+          open: parseFloat(b.open), high: parseFloat(b.high),
+          low: parseFloat(b.low), close: parseFloat(b.close), volume: 0,
+        }))
+        .filter((c) => c.time >= fromMs);
+    }
+
+    // COMMODITIES / STOCKS : pas de klines dispo facilement → retourner vide
+    return [];
+  } catch {
+    return [];
+  }
 }
 
 // ─── Dedup constants ──────────────────────────────────────────
@@ -254,18 +328,18 @@ async function processVariant(
   const updatedExisting: StoredAlert[] = [];
 
   for (const alert of existing) {
-    // Already decided — keep as-is but expire after 7 days
+    // Already decided — keep as-is, expire after 90 days
     if (alert.status !== "PENDING") {
       const age = now - new Date(alert.generatedAt).getTime();
-      if (age < 7 * 24 * 60 * 60 * 1000) updatedExisting.push(alert);
+      if (age < 90 * 24 * 60 * 60 * 1000) updatedExisting.push(alert);
       continue;
     }
 
     const age = now - new Date(alert.generatedAt).getTime();
     const windows = VALIDATION_WINDOWS_MS[alert.category];
 
-    // Too old (7 days) — expire
-    if (age > 7 * 24 * 60 * 60 * 1000) {
+    // Too old (90 days) — expire
+    if (age > 90 * 24 * 60 * 60 * 1000) {
       updatedExisting.push({ ...alert, status: "NEUTRAL", validatedAt: new Date().toISOString() });
       continue;
     }
@@ -276,49 +350,57 @@ async function processVariant(
       continue;
     }
 
-    // Fetch current price
-    const currentPrice = await fetchCurrentPrice(alert.symbol, alert.category);
-    if (!currentPrice) {
-      updatedExisting.push(alert); // retry next cron
-      continue;
-    }
+    // ── Validation par klines (simulation séquentielle) ──────────
+    const hasLevels = !!(alert.entry && alert.stopLoss && alert.target1);
+    const pastMedium = age > windows.medium;
 
-    // Level-based or % threshold
-    const hasLevels = alert.entry && alert.stopLoss && alert.target1;
-    const pastMedium = age > windows.medium; // after medium window → force close
     let result: "WIN" | "LOSS" | "NEUTRAL";
     let points: number;
-    let levelHit: "TP2" | "TP1" | "SL" | "NONE" | undefined;
+    let levelHit: "TP2" | "TP1" | "BE" | "SL" | "NONE" = "NONE";
+    let currentPrice = 0;
+    let klinesValidation: KlineValidationResult | null = null;
 
     if (hasLevels) {
-      const lvl = calculatePPFromLevels(
-        alert.type, alert.entry!, currentPrice,
-        alert.stopLoss!, alert.target1!, alert.target2,
-      );
-      if (lvl.result !== "NEUTRAL") {
-        // Level hit — decisive
-        result = lvl.result; points = lvl.points; levelHit = lvl.levelHit;
-      } else if (pastMedium) {
-        // No level hit after 4h — fall back to % threshold to force a result
-        const pp = calculatePP(alert.type, alert.price, currentPrice, alert.category);
-        result = pp.result; points = pp.points; levelHit = "NONE";
+      // Tente la validation par klines (candle par candle)
+      const signalMs = new Date(alert.generatedAt).getTime();
+      const candles = await fetchKlinesForValidation(alert.symbol, alert.category, signalMs);
+
+      if (candles.length > 0) {
+        klinesValidation = validateWithKlines(
+          alert.type, alert.entry!, alert.stopLoss!, alert.target1!, alert.target2,
+          candles,
+        );
+        result   = klinesValidation.result;
+        points   = klinesValidation.points;
+        levelHit = klinesValidation.levelHit;
+        currentPrice = candles[candles.length - 1].close;
       } else {
-        result = "NEUTRAL"; points = 0;
+        // Fallback prix spot si pas de klines
+        const spotPrice = await fetchCurrentPrice(alert.symbol, alert.category);
+        if (!spotPrice) { updatedExisting.push(alert); continue; }
+        currentPrice = spotPrice;
+        if (pastMedium) {
+          const pp = calculatePP(alert.type, alert.price, spotPrice, alert.category);
+          result = pp.result; points = pp.points; levelHit = "NONE";
+        } else {
+          result = "NEUTRAL"; points = 0;
+        }
       }
     } else {
-      const pp = calculatePP(alert.type, alert.price, currentPrice, alert.category);
+      // Pas de niveaux → fallback % threshold
+      const spotPrice = await fetchCurrentPrice(alert.symbol, alert.category);
+      if (!spotPrice) { updatedExisting.push(alert); continue; }
+      currentPrice = spotPrice;
+      const pp = calculatePP(alert.type, alert.price, spotPrice, alert.category);
       result = pp.result; points = pp.points;
     }
 
-    // NEUTRAL → keep retrying (only if not past medium window)
+    // NEUTRAL → keep retrying (sauf si pastMedium)
     if (result === "NEUTRAL" && !pastMedium) {
       updatedExisting.push(alert);
       continue;
     }
-    // Past medium window: force record even if NEUTRAL to clear the queue
-    if (result === "NEUTRAL" && pastMedium) {
-      levelHit = "NONE";
-    }
+    if (result === "NEUTRAL" && pastMedium) levelHit = "NONE";
 
     // Decisive result — record in memory
     try {
@@ -347,6 +429,15 @@ async function processVariant(
         target1: alert.target1,
         target2: alert.target2,
         levelHit,
+        // Kline precision data
+        tp1Price:     klinesValidation?.tp1Price,
+        tp2Price:     klinesValidation?.tp2Price,
+        bePrice:      klinesValidation?.bePrice,
+        slPrice:      klinesValidation?.slPrice,
+        tp1TouchedAt: klinesValidation?.tp1TouchedAt,
+        tp2TouchedAt: klinesValidation?.tp2TouchedAt,
+        beTouchedAt:  klinesValidation?.beTouchedAt,
+        slTouchedAt:  klinesValidation?.slTouchedAt,
       });
       validatedCount++;
     } catch (e) {
@@ -364,7 +455,7 @@ async function processVariant(
   }
 
   // 4. Merge and save
-  const merged = [...updatedExisting, ...newAlerts].slice(-100);
+  const merged = [...updatedExisting, ...newAlerts].slice(-1000);
   await saveAlerts(variant, merged);
 
   return { variant, generated: newAlerts.length, validated: validatedCount, errors };

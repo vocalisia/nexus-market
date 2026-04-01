@@ -53,7 +53,7 @@ export function useAlertValidation({ alerts, onValidated, variant = "1" }: UseAl
 
         let points: number;
         let result: "WIN" | "LOSS" | "NEUTRAL";
-        let levelHit: "TP2" | "TP1" | "SL" | "NONE" | undefined;
+        let levelHit: "TP2" | "TP1" | "BE" | "SL" | "NONE" | undefined;
 
         if (hasLevels) {
           const lvl = calculatePPFromLevels(

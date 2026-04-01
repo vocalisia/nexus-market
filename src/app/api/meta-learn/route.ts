@@ -37,7 +37,7 @@ async function redisSet(key: string, value: string): Promise<void> {
 // ─── Composite score for ranking ─────────────────────────────
 // Combines win rate + profit factor + EV, requires min samples
 
-const MIN_TRADES = 15;
+const MIN_TRADES = 10;
 
 function compositeScore(m: PerformanceMemory): number {
   const decisive = m.totalWins + m.totalLosses;

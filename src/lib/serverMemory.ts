@@ -36,7 +36,7 @@ export async function loadMemoryServer(variant: VariantId): Promise<PerformanceM
 
 export async function saveMemoryServer(variant: VariantId, memory: PerformanceMemory): Promise<void> {
   if (!REDIS_URL || !REDIS_TOKEN) return;
-  const trimmed = { ...memory, history: memory.history.slice(-200) };
+  const trimmed = { ...memory, history: memory.history.slice(-1000) };
   await fetch(`${REDIS_URL}/pipeline`, {
     method: "POST",
     headers: authHeaders(),
