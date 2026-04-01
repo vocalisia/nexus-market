@@ -3,7 +3,7 @@ import type { Asset, Signal } from "@/types/market";
 import { MODEL_VARIANTS, DEFAULT_VARIANT } from "@/lib/modelVariants";
 import type { VariantId } from "@/lib/modelVariants";
 import type { SignalConfig } from "@/lib/scoring";
-import { calculateRSI, calculateADX, calculateStochRSI, computeAllIndicators } from "@/lib/indicators";
+import { calculateRSI, calculateADX, calculateStochRSI, computeAllIndicators, detectRSIDivergence, computeMultiTF, detectVolumeAnomaly } from "@/lib/indicators";
 import type { SignalIndicatorsSnapshot } from "@/types/market";
 import { computeAIScore, getDirection, generateSignal } from "@/lib/scoring";
 import { correlatePolymarket, computePolymarketSentiment } from "@/lib/correlation";
@@ -214,17 +214,39 @@ export async function GET(req: NextRequest) {
       const adjustedScore = Math.min(100, Math.max(0, learnedScore + adjustment + regime.scoreModifier + fgAdj + mktSentAdj));
       const adjustedDirection = adjustedScore > 55 ? "UP" as const : adjustedScore < 45 ? "DOWN" as const : "NEUTRAL" as const;
 
+      // ── Predictive enhancements ──────────────────────────────
+      const divergence = detectRSIDivergence(a.sparkline);
+      const multiTF    = computeMultiTF(a.sparkline);
+      const volAnomaly = detectVolumeAnomaly(a.sparkline);
+
+      // Score bonus: divergence + multi-TF alignment + volume spike
+      let predictiveBonus = 0;
+      if (divergence.bullish && adjustedDirection === "UP")   predictiveBonus += 8;
+      if (divergence.bearish && adjustedDirection === "DOWN") predictiveBonus += 8;
+      if (multiTF.aligned && multiTF.direction === adjustedDirection) {
+        predictiveBonus += Math.round(multiTF.alignmentStrength * 0.4); // up to +20
+      }
+      if (volAnomaly.isSpike && volAnomaly.direction === adjustedDirection) {
+        predictiveBonus += 6; // volume confirms the move
+      }
+
+      const finalScore = Math.min(100, Math.max(0, adjustedScore + predictiveBonus));
+      const finalDirection = finalScore > 55 ? "UP" as const : finalScore < 45 ? "DOWN" as const : "NEUTRAL" as const;
+
       // Block SELL in BEAR/RANGING regime with weak ADX — main cause of false signals
       // Data: BEAR=11% WR, RANGING=33% WR when shorting into choppy market
+      // Exception: allow SELL if RSI bearish divergence AND volume spike confirm it
+      const hardConfirmed = divergence.bearish && volAnomaly.isSpike && volAnomaly.direction === "DOWN";
       const blockSell =
-        adjustedDirection === "DOWN" &&
+        finalDirection === "DOWN" &&
         (regime.regime === "BEAR" || regime.regime === "RANGING") &&
-        adxVal < 30;
+        adxVal < 30 &&
+        !hardConfirmed;
 
       const signal = blockSell ? null : generateSignal(
         a.name, a.symbol, rsi,
         a.change24h, a.change7d,
-        adjustedScore, adjustedDirection, a.category, a.sparkline, signalCfg
+        finalScore, finalDirection, a.category, a.sparkline, signalCfg
       );
 
       if (signal) {
@@ -239,7 +261,7 @@ export async function GET(req: NextRequest) {
           obvRising: ind.obv.rising,
           regime: regime.regime,
           fearGreed: fearGreed.value,
-          aiScore: adjustedScore,
+          aiScore: finalScore,
         };
         signals.push({ ...signal, indicatorsSnapshot: snapshot });
       }
@@ -252,10 +274,12 @@ export async function GET(req: NextRequest) {
 
       return {
         ...a,
+        aiScore: finalScore,
+        aiDirection: finalDirection,
         tradePlan: buildTradePlan(
           a.sparkline, rsi,
           a.change24h, a.change7d,
-          adjustedScore, a.category,
+          finalScore, a.category,
           signalForce,
         ),
       };

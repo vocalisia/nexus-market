@@ -420,3 +420,133 @@ export function computeCombinedScore(
 
   return { score, direction: score > 55 ? "UP" : score < 45 ? "DOWN" : "NEUTRAL", convergence };
 }
+
+// ─── RSI Divergence Detection ────────────────────────────────
+// Bullish: price lower low + RSI higher low  → reversal UP signal
+// Bearish: price higher high + RSI lower high → reversal DOWN signal
+// Splits last 30 candles into two halves and compares extremes
+
+export interface DivergenceResult {
+  bullish: boolean;
+  bearish: boolean;
+  strength: "strong" | "weak" | "none";
+}
+
+export function detectRSIDivergence(prices: number[]): DivergenceResult {
+  if (prices.length < 30) return { bullish: false, bearish: false, strength: "none" };
+
+  const window = 30;
+  const recent = prices.slice(-window);
+  const half = Math.floor(window / 2);
+
+  // Compute RSI series over the full price history
+  const rsiArr = lib.rsi(prices, 14).filter((v) => !isNaN(v) && v > 0);
+  if (rsiArr.length < window) return { bullish: false, bearish: false, strength: "none" };
+  const recentRSI = rsiArr.slice(-window);
+
+  const p1 = recent.slice(0, half);
+  const p2 = recent.slice(half);
+  const r1 = recentRSI.slice(0, half);
+  const r2 = recentRSI.slice(half);
+
+  const minP1 = Math.min(...p1);
+  const minP2 = Math.min(...p2);
+  const minR1 = Math.min(...r1);
+  const minR2 = Math.min(...r2);
+
+  const maxP1 = Math.max(...p1);
+  const maxP2 = Math.max(...p2);
+  const maxR1 = Math.max(...r1);
+  const maxR2 = Math.max(...r2);
+
+  // Bullish divergence: price lower low but RSI higher low (>3pt gap = real signal)
+  const bullish = minP2 < minP1 * 0.998 && minR2 > minR1 + 3;
+  // Bearish divergence: price higher high but RSI lower high (>3pt gap)
+  const bearish = maxP2 > maxP1 * 1.002 && maxR2 < maxR1 - 3;
+
+  const strength = bullish || bearish ? "strong" : "none";
+  return { bullish, bearish, strength };
+}
+
+// ─── Multi-Timeframe RSI Alignment ──────────────────────────
+// Downsamples hourly sparkline to simulate 4H bars (group by 4)
+// Returns: 1H RSI + 4H RSI — signal is stronger when both agree
+
+export interface MultiTFResult {
+  rsi1h: number;
+  rsi4h: number;
+  aligned: boolean;      // both timeframes agree on direction
+  direction: "UP" | "DOWN" | "NEUTRAL";
+  alignmentStrength: number; // 0-100 — distance both RSIs are from 50
+}
+
+export function computeMultiTF(prices: number[]): MultiTFResult {
+  if (prices.length < 16) {
+    return { rsi1h: 50, rsi4h: 50, aligned: false, direction: "NEUTRAL", alignmentStrength: 0 };
+  }
+
+  // 1H RSI — direct
+  const rsi1h = calculateRSI(prices, 14);
+
+  // 4H bars — take every 4th close from hourly prices
+  const bars4h: number[] = [];
+  for (let i = 3; i < prices.length; i += 4) {
+    bars4h.push(prices[i] ?? 0);
+  }
+  const rsi4h = bars4h.length >= 14 ? calculateRSI(bars4h, 14) : 50;
+
+  // Alignment: both timeframes must agree on direction
+  const up1h   = rsi1h < 45;   // 1H oversold → bullish
+  const up4h   = rsi4h < 45;   // 4H oversold → bullish
+  const down1h = rsi1h > 55;
+  const down4h = rsi4h > 55;
+
+  const alignedUp   = up1h   && up4h;
+  const alignedDown = down1h && down4h;
+  const aligned = alignedUp || alignedDown;
+
+  const direction = alignedUp ? "UP" : alignedDown ? "DOWN" : "NEUTRAL";
+
+  // Strength: how far both RSIs are from neutral (50) in the same direction
+  const dist1h = Math.abs(rsi1h - 50);
+  const dist4h = Math.abs(rsi4h - 50);
+  const alignmentStrength = aligned ? Math.round((dist1h + dist4h) / 2) : 0;
+
+  return { rsi1h, rsi4h, aligned, direction, alignmentStrength };
+}
+
+// ─── Volume Anomaly Detection ────────────────────────────────
+// Detects abnormal volume spikes vs rolling average
+// Uses price velocity as a volume proxy when real volume unavailable
+
+export interface VolumeAnomalyResult {
+  isSpike: boolean;
+  ratio: number;       // current / average (e.g. 2.3 = 130% above average)
+  direction: "UP" | "DOWN" | "NEUTRAL"; // which direction the spike favors
+}
+
+export function detectVolumeAnomaly(prices: number[], lookback = 20): VolumeAnomalyResult {
+  if (prices.length < lookback + 2) {
+    return { isSpike: false, ratio: 1, direction: "NEUTRAL" };
+  }
+
+  // Use absolute candle range (price move per bar) as volume proxy
+  const ranges: number[] = [];
+  for (let i = 1; i < prices.length; i++) {
+    ranges.push(Math.abs((prices[i] ?? 0) - (prices[i - 1] ?? 0)));
+  }
+
+  const recent = ranges.slice(-lookback);
+  const avg = recent.reduce((a, b) => a + b, 0) / recent.length || 1;
+  const last = recent[recent.length - 1] ?? 0;
+  const ratio = parseFloat((last / avg).toFixed(2));
+
+  const isSpike = ratio >= 2.0; // 2× average = significant spike
+
+  // Direction: check if last price move is up or down
+  const lastPrice = prices[prices.length - 1] ?? 0;
+  const prevPrice = prices[prices.length - 2] ?? lastPrice;
+  const direction = lastPrice > prevPrice ? "UP" : lastPrice < prevPrice ? "DOWN" : "NEUTRAL";
+
+  return { isSpike, ratio, direction };
+}
