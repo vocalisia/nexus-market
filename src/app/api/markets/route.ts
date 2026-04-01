@@ -214,7 +214,14 @@ export async function GET(req: NextRequest) {
       const adjustedScore = Math.min(100, Math.max(0, learnedScore + adjustment + regime.scoreModifier + fgAdj + mktSentAdj));
       const adjustedDirection = adjustedScore > 55 ? "UP" as const : adjustedScore < 45 ? "DOWN" as const : "NEUTRAL" as const;
 
-      const signal = generateSignal(
+      // Block SELL in BEAR/RANGING regime with weak ADX — main cause of false signals
+      // Data: BEAR=11% WR, RANGING=33% WR when shorting into choppy market
+      const blockSell =
+        adjustedDirection === "DOWN" &&
+        (regime.regime === "BEAR" || regime.regime === "RANGING") &&
+        adxVal < 30;
+
+      const signal = blockSell ? null : generateSignal(
         a.name, a.symbol, rsi,
         a.change24h, a.change7d,
         adjustedScore, adjustedDirection, a.category, a.sparkline, signalCfg
