@@ -145,11 +145,12 @@ export interface PerformanceMemory {
 }
 
 // ─── Validation thresholds ───────────────────────────────────
+// Seuil minimal pour eviter les ties — tout mouvement directionnel compte
 export const VALIDATION_THRESHOLDS: Record<AssetCategory, number> = {
-  CRYPTO:      0.002, // 0.2% — lowered so more 1h moves count as WIN/LOSS
-  FOREX:       0.0010,
-  COMMODITIES: 0.003,
-  STOCKS:      0.003,
+  CRYPTO:      0.0005, // 0.05% — quasi tout mouvement 1h est decisif
+  FOREX:       0.0002, // 0.02%
+  COMMODITIES: 0.001,  // 0.1%
+  STOCKS:      0.001,  // 0.1%
 };
 
 export const VALIDATION_WINDOWS_MS: Record<

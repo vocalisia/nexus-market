@@ -107,7 +107,22 @@ export async function fetchGold(sentiment: (id: string) => number): Promise<Asse
       change7d  = data["paxos-gold"]?.usd_7d_change  ?? 0;
     }
 
-    if (price === 0) return []; // CoinGecko unavailable
+    // Fallback: Binance REST for PAXG price if CoinGecko rate-limited
+    if (price === 0) {
+      try {
+        const binRes = await fetch(
+          "https://api.binance.com/api/v3/ticker/24hr?symbol=PAXGUSDT",
+          { next: { revalidate: 60 } },
+        );
+        if (binRes.ok) {
+          const bin = await binRes.json() as { lastPrice?: string; priceChangePercent?: string };
+          price     = parseFloat(bin.lastPrice ?? "0") || 0;
+          change24h = parseFloat(bin.priceChangePercent ?? "0") || 0;
+        }
+      } catch { /* ignore */ }
+    }
+
+    if (price === 0) return []; // both APIs unavailable
 
     let sparkline: number[] = [];
     if (chartRes.status === "fulfilled" && chartRes.value.ok) {

@@ -289,19 +289,18 @@ export default function PredictionDashboard() {
   const [showIndicators, setShowIndicators] = useState(false);
   const [showAlertPanel, setShowAlertPanel] = useState(false);
 
-  // Model variant — readable from ?variant=X URL param, falls back to localStorage/env
-  const FIXED = (process.env.NEXT_PUBLIC_VARIANT ?? "") as VariantId | "";
-  const [variant, setVariantState] = useState<VariantId>(() => {
-    if (typeof window !== "undefined") {
-      const urlV = new URLSearchParams(window.location.search).get("variant");
-      if (urlV && (["1", "2", "3", "4"] as string[]).includes(urlV)) return urlV as VariantId;
+  // Model variant — URL param ?variant=X wins over everything (no SSR conflict)
+  const [variant, setVariantState] = useState<VariantId>("1");
+  useEffect(() => {
+    const urlV = new URLSearchParams(window.location.search).get("variant");
+    if (urlV && (["1", "2", "3", "4"] as string[]).includes(urlV)) {
+      setVariantState(urlV as VariantId);
+    } else {
+      const stored = localStorage.getItem("nexus_variant") ?? "1";
+      setVariantState(stored as VariantId);
     }
-    if (FIXED && (["1", "2", "3", "4"] as string[]).includes(FIXED)) return FIXED;
-    if (typeof window === "undefined") return "1";
-    return (localStorage.getItem("nexus_variant") ?? "1") as VariantId;
-  });
+  }, []);
   const setVariant = (v: VariantId) => {
-    // Navigate via URL param — works on any deployment without separate redirects
     const url = new URL(window.location.href);
     url.searchParams.set("variant", v);
     window.location.href = url.toString();
