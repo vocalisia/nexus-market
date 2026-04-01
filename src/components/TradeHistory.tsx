@@ -75,6 +75,7 @@ function Row({ r }: { r: AlertRecord }) {
 
   const resultColor = win ? "#34D399" : loss ? "#FB7185" : "#475569";
   const resultIcon  = win ? "✅" : loss ? "❌" : "⚪";
+  const resultLabel = win ? "WIN" : loss ? "LOSS" : "INDÉCIS";
   const ppSign      = r.points >= 0 ? "+" : "";
   const isBuy       = r.type === "BUY";
   const typeColor   = isBuy ? "#4ade80" : "#f87171";
@@ -101,6 +102,14 @@ function Row({ r }: { r: AlertRecord }) {
       {/* ── Ligne 1 : result · symbol · direction · sévérité · PP ── */}
       <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 6 }}>
         <span style={{ fontSize: 14, flexShrink: 0 }}>{resultIcon}</span>
+        <span style={{
+          fontSize: 9, fontWeight: 700, fontFamily: R,
+          color: resultColor, letterSpacing: "0.1em",
+          padding: "2px 6px", border: `1px solid ${resultColor}40`,
+          borderRadius: 3, minWidth: 60, textAlign: "center",
+        }}>
+          {resultLabel}
+        </span>
         <span style={{ fontFamily: R, fontWeight: 700, fontSize: 14, color: "#CBD5E1" }}>{r.symbol}</span>
         <span style={{
           fontSize: 10, fontWeight: 700, fontFamily: R, color: typeColor,
