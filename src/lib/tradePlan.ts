@@ -29,7 +29,7 @@ export function buildTradePlan(
   const price = prices[prices.length - 1] ?? 0;
 
   // Not enough data → no plan
-  if (prices.length < 21 || price === 0) {
+  if (prices.length < 3 || price === 0) {
     return {
       direction: "WAIT",
       strategy: "Insufficient data",
@@ -41,16 +41,17 @@ export function buildTradePlan(
       target1Percent: 0,
       target2Percent: 0,
       confidence: aiScore,
-      reasons: ["Need ≥21 price points"],
+      reasons: ["Need ≥3 price points"],
     };
   }
 
-  // ── Indicators ───────────────────────────────────────────────
-  const sma9  = lastSMA(prices, 9);
-  const sma21 = lastSMA(prices, 21);
-  const ema9  = lastEMA(prices, 9);
-  const bb    = bollingerBands(prices, 20, 2.0);
-  const z     = zScore(prices, 20);
+  // ── Indicators (adaptive to available data length) ───────────
+  const n     = prices.length;
+  const sma9  = lastSMA(prices, Math.min(9,  n));
+  const sma21 = lastSMA(prices, Math.min(21, n));
+  const ema9  = lastEMA(prices, Math.min(9,  n));
+  const bb    = bollingerBands(prices, Math.min(20, n), 2.0);
+  const z     = n >= 5 ? zScore(prices, Math.min(20, n)) : 0;
 
   const bbRange    = bb.upper - bb.lower;
   const bbPos      = bbRange > 0 ? (price - bb.lower) / bbRange : 0.5;
