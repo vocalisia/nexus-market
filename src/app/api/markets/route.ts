@@ -242,15 +242,18 @@ export async function GET(req: NextRequest) {
       };
       const tooFlat = atr.percent < (MIN_ATR[a.category] ?? 0.3);
 
-      // Block SELL in BEAR/RANGING regime with weak ADX
-      const hardConfirmed = divergence.bearish && volAnomaly.isSpike && volAnomaly.direction === "DOWN";
-      const blockSell =
-        finalDirection === "DOWN" &&
+      // Block ALL signals in RANGING/BEAR with weak ADX — data: 24% WR RANGING, 10% WR BEAR
+      // Exception: strong divergence + volume spike = signal allowed
+      const hardConfirmed =
+        (divergence.bullish || divergence.bearish) &&
+        volAnomaly.isSpike &&
+        multiTF.aligned;
+      const blockSignal =
         (regime.regime === "BEAR" || regime.regime === "RANGING") &&
-        adxVal < 30 &&
+        adxVal < 25 &&
         !hardConfirmed;
 
-      const signal = (tooFlat || blockSell) ? null : generateSignal(
+      const signal = (tooFlat || blockSignal) ? null : generateSignal(
         a.name, a.symbol, rsi,
         a.change24h, a.change7d,
         finalScore, finalDirection, a.category, a.sparkline, signalCfg

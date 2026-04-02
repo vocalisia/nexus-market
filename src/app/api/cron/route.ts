@@ -19,7 +19,7 @@ import type { AlertIndicatorsSnapshot, KlineValidationResult } from "@/lib/memor
 import { calculatePP, VALIDATION_WINDOWS_MS, validateWithKlines } from "@/lib/memoryEngine";
 import type { Candle } from "@/app/api/klines/route";
 import { addAlertRecordServer, loadMemoryServer } from "@/lib/serverMemory";
-import { generateSignal, computeSentimentAdjustment } from "@/lib/scoring";
+import { generateSignal, computeSentimentAdjustment, computeAIScore } from "@/lib/scoring";
 import type { SignalConfig } from "@/lib/scoring";
 import {
   calculateRSI, calculateADX, calculateStochRSI, computeAllIndicators,
@@ -146,8 +146,6 @@ async function fetchKlinesForValidation(
   fromMs: number,
 ): Promise<Candle[]> {
   try {
-    const BASE = "https://prediction-dashboard-one.vercel.app";
-
     if (category === "CRYPTO") {
       // OKX → Bybit → Binance en fallback
       const okxSym: Record<string, string> = {
@@ -236,8 +234,10 @@ async function processVariant(
     highOnly: cfg.highOnly,
   };
 
-  // 1. Load existing alerts
+  // 1. Load existing alerts + learned weights
   const existing = await loadAlerts(variant);
+  const memory = await loadMemoryServer(variant);
+  const learnedWeights = memory.weights;
   const now = Date.now();
 
   // Build dedup map from pending alerts
@@ -250,7 +250,7 @@ async function processVariant(
 
   const macroCtx = computeMacroContext(assets);
 
-  // 2. Generate new signals
+  // 2. Generate new signals — USING LEARNED WEIGHTS
   const newAlerts: StoredAlert[] = [];
   for (const asset of assets) {
     const rsi    = calculateRSI(asset.sparkline);
@@ -258,11 +258,28 @@ async function processVariant(
     const { adjustment } = getMacroAdjustment(asset.id, macroCtx);
     const fgAdj = asset.category === "CRYPTO"
       ? fearGreedAdjustment(fearGreedValue) * cfg.fearGreedMult : 0;
+
+    // Recalculer le score avec les poids appris
+    const sigAdx   = calculateADX(asset.sparkline, asset.sparkline, asset.sparkline) ?? 0;
+    const sigStoch = calculateStochRSI(asset.sparkline);
+    const learnedScore = computeAIScore(
+      asset.change24h, asset.change7d, rsi, asset.category,
+      50, sigAdx, sigStoch?.k ?? 50, learnedWeights,
+    );
     const adjustedScore = Math.min(100, Math.max(0,
-      asset.aiScore + adjustment + regime.scoreModifier + fgAdj
+      learnedScore + adjustment + regime.scoreModifier + fgAdj
     ));
+
+    // BUG 2 FIX: Bloquer SELL crypto en régime BULL avec Fear&Greed > 65
+    const isBullCrypto = asset.category === "CRYPTO"
+      && regime.regime === "BULL" && fearGreedValue > 65;
+
     const adjustedDir = adjustedScore > 55 ? "UP" as const
       : adjustedScore < 45 ? "DOWN" as const : "NEUTRAL" as const;
+
+    // Block ALL signals in RANGING/BEAR with weak ADX (same logic as /api/markets)
+    // Data: RANGING=24% WR (13W/41L), BEAR=10% WR (1W/9L) → massacre
+    if ((regime.regime === "BEAR" || regime.regime === "RANGING") && sigAdx < 25) continue;
 
     const signal = generateSignal(
       asset.name, asset.symbol, rsi,
@@ -271,6 +288,9 @@ async function processVariant(
       asset.category, asset.sparkline, signalCfg,
     );
     if (!signal) continue;
+
+    // BUG 2 FIX: Bloquer SELL crypto en régime BULL + Fear&Greed > 65
+    if (isBullCrypto && signal.type === "SELL") continue;
 
     // Dedup check
     const dk = `${asset.symbol}_${signal.type}`;
@@ -338,8 +358,9 @@ async function processVariant(
     const age = now - new Date(alert.generatedAt).getTime();
     const windows = VALIDATION_WINDOWS_MS[alert.category];
 
-    // Too old (90 days) — expire
-    if (age > 90 * 24 * 60 * 60 * 1000) {
+    // Too old (21 days max) — expire
+    const MAX_AGE = 21 * 24 * 60 * 60 * 1000;
+    if (age > MAX_AGE) {
       updatedExisting.push({ ...alert, status: "NEUTRAL", validatedAt: new Date().toISOString() });
       continue;
     }
@@ -395,12 +416,25 @@ async function processVariant(
       result = pp.result; points = pp.points;
     }
 
-    // NEUTRAL → keep retrying (sauf si pastMedium)
-    if (result === "NEUTRAL" && !pastMedium) {
-      updatedExisting.push(alert);
-      continue;
+    // ── NEUTRE supprimé — seulement EXPIRATION ──
+    // Si aucun niveau touché ET dépassé le long window → EXPIRE (pas de record)
+    // Si aucun niveau touché ET dans le long window → reste PENDING
+    const pastLong = age > windows.long;
+    if (result === "NEUTRAL") {
+      if (!pastLong) {
+        updatedExisting.push(alert); // Reste en attente
+        continue;
+      } else {
+        // Expiré sans record — on ne l'enregistre pas
+        updatedExisting.push({
+          ...alert,
+          status: "NEUTRAL", // Marqué NEUTRE UI mais pas dans la mémoire
+          validatedAt: new Date().toISOString(),
+          validationPrice: currentPrice,
+        });
+        continue; // Skip le record en mémoire
+      }
     }
-    if (result === "NEUTRAL" && pastMedium) levelHit = "NONE";
 
     // Decisive result — record in memory
     try {

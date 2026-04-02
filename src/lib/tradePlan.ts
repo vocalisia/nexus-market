@@ -10,11 +10,12 @@ import type { AssetCategory, TradePlan } from "@/types/market";
 import { lastSMA, lastEMA, bollingerBands, zScore } from "./indicators";
 
 // ── Per-category stop-loss range (min%, max%) ────────────────
+// Widened after analysis: 19/20 trades hit SL at 3% — crypto swings 5%+ hourly
 const STOP_RANGE: Record<AssetCategory, [number, number]> = {
-  CRYPTO:      [0.030, 0.080],
-  FOREX:       [0.005, 0.020],
-  COMMODITIES: [0.020, 0.050],
-  STOCKS:      [0.025, 0.070],
+  CRYPTO:      [0.050, 0.120],  // was 3-8% → now 5-12%
+  FOREX:       [0.008, 0.025],  // was 0.5-2% → now 0.8-2.5%
+  COMMODITIES: [0.030, 0.070],  // was 2-5% → now 3-7%
+  STOCKS:      [0.035, 0.090],  // was 2.5-7% → now 3.5-9%
 };
 
 export function buildTradePlan(
