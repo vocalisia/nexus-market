@@ -3,7 +3,7 @@ import type { Asset, Signal } from "@/types/market";
 import { MODEL_VARIANTS, DEFAULT_VARIANT } from "@/lib/modelVariants";
 import type { VariantId } from "@/lib/modelVariants";
 import type { SignalConfig } from "@/lib/scoring";
-import { calculateRSI, calculateADX, calculateStochRSI, calculateATR, computeAllIndicators, detectRSIDivergence, computeMultiTF, detectVolumeAnomaly } from "@/lib/indicators";
+import { calculateRSI, calculateADX, calculateStochRSI, calculateATR, computeAllIndicators, detectRSIDivergence, computeMultiTF, detectVolumeAnomaly, detectCandlestickPatterns, detectSupportResistance } from "@/lib/indicators";
 import type { SignalIndicatorsSnapshot } from "@/types/market";
 import { computeAIScore, getDirection, generateSignal } from "@/lib/scoring";
 import { correlatePolymarket, computePolymarketSentiment } from "@/lib/correlation";
@@ -215,11 +215,13 @@ export async function GET(req: NextRequest) {
       const adjustedDirection = adjustedScore > 55 ? "UP" as const : adjustedScore < 45 ? "DOWN" as const : "NEUTRAL" as const;
 
       // ── Predictive enhancements ──────────────────────────────
-      const divergence = detectRSIDivergence(a.sparkline);
-      const multiTF    = computeMultiTF(a.sparkline);
-      const volAnomaly = detectVolumeAnomaly(a.sparkline);
+      const divergence   = detectRSIDivergence(a.sparkline);
+      const multiTF      = computeMultiTF(a.sparkline);
+      const volAnomaly   = detectVolumeAnomaly(a.sparkline);
+      const candlestick  = detectCandlestickPatterns(a.sparkline);
+      const sr           = detectSupportResistance(a.sparkline);
 
-      // Score bonus: divergence + multi-TF alignment + volume spike
+      // Score bonus: divergence + multi-TF + volume + candlestick + S/R
       let predictiveBonus = 0;
       if (divergence.bullish && adjustedDirection === "UP")   predictiveBonus += 8;
       if (divergence.bearish && adjustedDirection === "DOWN") predictiveBonus += 8;
@@ -229,6 +231,15 @@ export async function GET(req: NextRequest) {
       if (volAnomaly.isSpike && volAnomaly.direction === adjustedDirection) {
         predictiveBonus += 6; // volume confirms the move
       }
+      // Candlestick patterns (from stockbot): engulfing = strong reversal signal
+      if (candlestick.bullishEngulfing && adjustedDirection === "UP")   predictiveBonus += 10;
+      if (candlestick.bearishEngulfing && adjustedDirection === "DOWN") predictiveBonus += 10;
+      // Support/Resistance proximity: BUY near support or SELL near resistance = high probability
+      if (sr.nearSupport && adjustedDirection === "UP")      predictiveBonus += 7;
+      if (sr.nearResistance && adjustedDirection === "DOWN") predictiveBonus += 7;
+      // Penalty: BUY into resistance or SELL into support = low probability
+      if (sr.nearResistance && adjustedDirection === "UP")   predictiveBonus -= 10;
+      if (sr.nearSupport && adjustedDirection === "DOWN")    predictiveBonus -= 10;
 
       const finalScore = Math.min(100, Math.max(0, adjustedScore + predictiveBonus));
       const finalDirection = finalScore > 55 ? "UP" as const : finalScore < 45 ? "DOWN" as const : "NEUTRAL" as const;

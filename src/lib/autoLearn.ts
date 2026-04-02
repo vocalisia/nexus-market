@@ -13,13 +13,13 @@ function clampWeight(w: number): number {
   return Math.min(WEIGHT_BOUNDS.max, Math.max(WEIGHT_BOUNDS.min, w));
 }
 
-// ─── Learning rate by phase ───────────────────────────────────
+// ─── Learning rate by phase (aggressive after Hyper Alpha Arena insights) ──
 function getLearningRate(phase: PerformanceMemory["learningPhase"]): number {
   switch (phase) {
     case "COLD":    return 0;
-    case "WARMING": return 0.025;
-    case "ACTIVE":  return 0.05;
-    case "FULL":    return 0.05;
+    case "WARMING": return 0.04;
+    case "ACTIVE":  return 0.08;
+    case "FULL":    return 0.10; // was 0.05 — faster adaptation to market changes
   }
 }
 

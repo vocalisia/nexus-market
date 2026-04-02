@@ -421,6 +421,100 @@ export function computeCombinedScore(
   return { score, direction: score > 55 ? "UP" : score < 45 ? "DOWN" : "NEUTRAL", convergence };
 }
 
+// ─── Candlestick Pattern Detection (from stockbot) ──────────
+// Bullish engulfing: previous candle red, current candle green + bigger body
+// Bearish engulfing: previous candle green, current candle red + bigger body
+
+export interface CandlestickResult {
+  bullishEngulfing: boolean;
+  bearishEngulfing: boolean;
+  pattern: string;
+}
+
+export function detectCandlestickPatterns(prices: number[]): CandlestickResult {
+  if (prices.length < 3) return { bullishEngulfing: false, bearishEngulfing: false, pattern: "NONE" };
+
+  const n = prices.length;
+  const c0 = prices[n - 3] ?? 0; // open of prev candle (approx)
+  const c1 = prices[n - 2] ?? 0; // close of prev candle = open of current
+  const c2 = prices[n - 1] ?? 0; // close of current candle
+
+  const prevBody = c1 - c0;
+  const currBody = c2 - c1;
+
+  // Bullish engulfing: prev was red (down), current is green (up) and bigger
+  const bullishEngulfing = prevBody < 0 && currBody > 0 && Math.abs(currBody) > Math.abs(prevBody) * 1.2;
+  // Bearish engulfing: prev was green (up), current is red (down) and bigger
+  const bearishEngulfing = prevBody > 0 && currBody < 0 && Math.abs(currBody) > Math.abs(prevBody) * 1.2;
+
+  const pattern = bullishEngulfing ? "BULLISH_ENGULFING"
+    : bearishEngulfing ? "BEARISH_ENGULFING"
+    : "NONE";
+
+  return { bullishEngulfing, bearishEngulfing, pattern };
+}
+
+// ─── Support / Resistance Detection (from stockbot) ─────────
+// Finds local extremes in the price series as S/R zones
+// Signal is stronger when price is near a key level
+
+export interface SupportResistance {
+  nearSupport: boolean;
+  nearResistance: boolean;
+  supportLevel: number;
+  resistanceLevel: number;
+  distanceToSupport: number;   // % distance
+  distanceToResistance: number; // % distance
+}
+
+export function detectSupportResistance(prices: number[], lookback = 30): SupportResistance {
+  const empty: SupportResistance = {
+    nearSupport: false, nearResistance: false,
+    supportLevel: 0, resistanceLevel: 0,
+    distanceToSupport: 100, distanceToResistance: 100,
+  };
+  if (prices.length < lookback) return empty;
+
+  const window = prices.slice(-lookback);
+  const current = prices[prices.length - 1] ?? 0;
+  if (current === 0) return empty;
+
+  // Find local lows (supports) and highs (resistances) with 3-bar pivot
+  const lows: number[] = [];
+  const highs: number[] = [];
+  for (let i = 2; i < window.length - 2; i++) {
+    const p = window[i] ?? 0;
+    const prev1 = window[i - 1] ?? 0;
+    const prev2 = window[i - 2] ?? 0;
+    const next1 = window[i + 1] ?? 0;
+    const next2 = window[i + 2] ?? 0;
+    if (p <= prev1 && p <= prev2 && p <= next1 && p <= next2) lows.push(p);
+    if (p >= prev1 && p >= prev2 && p >= next1 && p >= next2) highs.push(p);
+  }
+
+  if (lows.length === 0 && highs.length === 0) return empty;
+
+  // Closest support below current price
+  const supports = lows.filter((l) => l < current).sort((a, b) => b - a);
+  const resistances = highs.filter((h) => h > current).sort((a, b) => a - b);
+
+  const supportLevel = supports[0] ?? 0;
+  const resistanceLevel = resistances[0] ?? Infinity;
+
+  const distS = supportLevel > 0 ? ((current - supportLevel) / current) * 100 : 100;
+  const distR = resistanceLevel < Infinity ? ((resistanceLevel - current) / current) * 100 : 100;
+
+  // "Near" = within 1.5% of level
+  return {
+    nearSupport: distS < 1.5,
+    nearResistance: distR < 1.5,
+    supportLevel,
+    resistanceLevel: resistanceLevel === Infinity ? 0 : resistanceLevel,
+    distanceToSupport: parseFloat(distS.toFixed(2)),
+    distanceToResistance: parseFloat(distR.toFixed(2)),
+  };
+}
+
 // ─── RSI Divergence Detection ────────────────────────────────
 // Bullish: price lower low + RSI higher low  → reversal UP signal
 // Bearish: price higher high + RSI lower high → reversal DOWN signal
