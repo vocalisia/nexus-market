@@ -289,21 +289,17 @@ export default function PredictionDashboard() {
   const [showIndicators, setShowIndicators] = useState(false);
   const [showAlertPanel, setShowAlertPanel] = useState(false);
 
-  // Model variant — URL param ?variant=X wins over everything (no SSR conflict)
+  // Model variant — localStorage, switch instant sans reload
   const [variant, setVariantState] = useState<VariantId>("1");
   useEffect(() => {
-    const urlV = new URLSearchParams(window.location.search).get("variant");
-    if (urlV && (["1", "2", "3", "4"] as string[]).includes(urlV)) {
-      setVariantState(urlV as VariantId);
-    } else {
-      const stored = localStorage.getItem("nexus_variant") ?? "1";
+    const stored = localStorage.getItem("nexus_variant");
+    if (stored && (["1", "2", "3", "4"] as string[]).includes(stored)) {
       setVariantState(stored as VariantId);
     }
   }, []);
   const setVariant = (v: VariantId) => {
-    const url = new URL(window.location.href);
-    url.searchParams.set("variant", v);
-    window.location.href = url.toString();
+    localStorage.setItem("nexus_variant", v);
+    setVariantState(v);
   };
 
   // Alert system — read-only from Redis (server generates + validates via cron)

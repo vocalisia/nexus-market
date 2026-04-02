@@ -3,7 +3,7 @@ import type { Asset, Signal } from "@/types/market";
 import { MODEL_VARIANTS, DEFAULT_VARIANT } from "@/lib/modelVariants";
 import type { VariantId } from "@/lib/modelVariants";
 import type { SignalConfig } from "@/lib/scoring";
-import { calculateRSI, calculateADX, calculateStochRSI, computeAllIndicators, detectRSIDivergence, computeMultiTF, detectVolumeAnomaly } from "@/lib/indicators";
+import { calculateRSI, calculateADX, calculateStochRSI, calculateATR, computeAllIndicators, detectRSIDivergence, computeMultiTF, detectVolumeAnomaly } from "@/lib/indicators";
 import type { SignalIndicatorsSnapshot } from "@/types/market";
 import { computeAIScore, getDirection, generateSignal } from "@/lib/scoring";
 import { correlatePolymarket, computePolymarketSentiment } from "@/lib/correlation";
@@ -233,9 +233,16 @@ export async function GET(req: NextRequest) {
       const finalScore = Math.min(100, Math.max(0, adjustedScore + predictiveBonus));
       const finalDirection = finalScore > 55 ? "UP" as const : finalScore < 45 ? "DOWN" as const : "NEUTRAL" as const;
 
-      // Block SELL in BEAR/RANGING regime with weak ADX — main cause of false signals
-      // Data: BEAR=11% WR, RANGING=33% WR when shorting into choppy market
-      // Exception: allow SELL if RSI bearish divergence AND volume spike confirm it
+      // ── ATR volatility gate: block signals on flat markets ────
+      // If ATR% is too low, the price won't move enough to be decisive
+      // → signal would end up NEUTRAL = waste of time for the user
+      const atr = calculateATR(a.sparkline);
+      const MIN_ATR: Record<string, number> = {
+        CRYPTO: 0.8, FOREX: 0.15, COMMODITIES: 0.4, STOCKS: 0.3,
+      };
+      const tooFlat = atr.percent < (MIN_ATR[a.category] ?? 0.3);
+
+      // Block SELL in BEAR/RANGING regime with weak ADX
       const hardConfirmed = divergence.bearish && volAnomaly.isSpike && volAnomaly.direction === "DOWN";
       const blockSell =
         finalDirection === "DOWN" &&
@@ -243,7 +250,7 @@ export async function GET(req: NextRequest) {
         adxVal < 30 &&
         !hardConfirmed;
 
-      const signal = blockSell ? null : generateSignal(
+      const signal = (tooFlat || blockSell) ? null : generateSignal(
         a.name, a.symbol, rsi,
         a.change24h, a.change7d,
         finalScore, finalDirection, a.category, a.sparkline, signalCfg
