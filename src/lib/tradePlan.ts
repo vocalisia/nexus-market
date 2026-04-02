@@ -7,7 +7,7 @@
 // Outputs structured entry/stop/target plan with 1:2 and 1:3 R/R
 
 import type { AssetCategory, TradePlan } from "@/types/market";
-import { lastSMA, lastEMA, bollingerBands, zScore } from "./indicators";
+import { lastSMA, lastEMA, bollingerBands, zScore, calculateATR } from "./indicators";
 
 // ── Per-category stop-loss range (min%, max%) ────────────────
 // Widened after analysis: 19/20 trades hit SL at 3% — crypto swings 5%+ hourly
@@ -161,12 +161,17 @@ export function buildTradePlan(
   else if (z < -1.5 || z > 1.5) strategy = "Z-Score Reversion";
   else strategy = "AI Momentum";
 
-  // ── Stop-loss calculation ────────────────────────────────────
+  // ── Stop-loss calculation (V3: ATR-based + BB fallback) ──────
   const [minStop, maxStop] = STOP_RANGE[category];
+  const atr = calculateATR(prices, Math.min(14, n - 1));
+  const atrPct = price > 0 ? (atr.value * 1.5) / price : 0; // 1.5x ATR = standard SL
 
   let rawStopPct: number;
-  if (direction === "LONG") {
-    // Natural stop = just below lower BB
+  if (atrPct > 0) {
+    // V3: Utiliser ATR comme base (reflète la volatilité réelle)
+    rawStopPct = atrPct;
+  } else if (direction === "LONG") {
+    // Fallback BB
     rawStopPct = bbRange > 0 ? (price - bb.lower) / price : (minStop + maxStop) / 2;
   } else if (direction === "SHORT") {
     rawStopPct = bbRange > 0 ? (bb.upper - price) / price : (minStop + maxStop) / 2;

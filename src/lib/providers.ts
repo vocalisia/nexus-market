@@ -45,6 +45,8 @@ export async function fetchCoinGecko(sentiment: (id: string) => number): Promise
     const override = COMMODITY_OVERRIDES[coin.id];
     const category: AssetCategory = override?.category ?? "CRYPTO";
     const sparkline = coin.sparkline_in_7d?.price ?? [];
+    // V3 FIX 3: Skip assets with < 15 price points (RSI/BB unreliable)
+    if (sparkline.length < 15) return null;
     const rsi = calculateRSI(sparkline);
     const change1h  = coin.price_change_percentage_1h_in_currency  ?? 0;
     const change24h = coin.price_change_percentage_24h_in_currency ?? 0;
@@ -63,7 +65,7 @@ export async function fetchCoinGecko(sentiment: (id: string) => number): Promise
       sparkline, aiScore,
       aiDirection: getDirection(aiScore),
     };
-  });
+  }).filter((a): a is Asset => a !== null);
 }
 
 // ============================================================

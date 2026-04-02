@@ -225,6 +225,7 @@ async function processVariant(
   variant: VariantId,
   assets: Asset[],
   fearGreedValue: number,
+  btcIsDumping: boolean,
 ): Promise<CronResult> {
   const errors: string[] = [];
   const cfg = MODEL_VARIANTS[variant];
@@ -234,11 +235,20 @@ async function processVariant(
     highOnly: cfg.highOnly,
   };
 
-  // 1. Load existing alerts + learned weights
+  // 1. Load existing alerts + learned weights + asset performance
   const existing = await loadAlerts(variant);
   const memory = await loadMemoryServer(variant);
   const learnedWeights = memory.weights;
   const now = Date.now();
+
+  // V3 FIX 4: Build set of chronically losing assets (win rate < 35% over 20+ trades)
+  const losersSet = new Set<string>();
+  for (const [sym, stats] of Object.entries(memory.byAsset)) {
+    const decisive = stats.wins + stats.losses;
+    if (decisive >= 20 && stats.winRate < 35) {
+      losersSet.add(sym);
+    }
+  }
 
   // Build dedup map from pending alerts
   const dedupMap = new Map<string, number>();
@@ -291,6 +301,12 @@ async function processVariant(
 
     // BUG 2 FIX: Bloquer SELL crypto en régime BULL + Fear&Greed > 65
     if (isBullCrypto && signal.type === "SELL") continue;
+
+    // V3 FIX 4: Skip chronically losing assets
+    if (losersSet.has(asset.symbol.toUpperCase())) continue;
+
+    // V3 FIX 5: Block altcoin BUY when BTC is dumping > 5%
+    if (btcIsDumping && asset.category === "CRYPTO" && asset.symbol.toUpperCase() !== "BTC" && signal.type === "BUY") continue;
 
     // Dedup check
     const dk = `${asset.symbol}_${signal.type}`;
@@ -526,15 +542,27 @@ export async function GET() {
 
   const sentiment = (id: string) => computePolymarketSentiment(id, polymarket);
 
+  // V3 FIX 1: Skip forex on weekends (stale data = junk signals)
+  const dayOfWeek = new Date().getUTCDay(); // 0=Sun, 6=Sat
+  const isWeekend = dayOfWeek === 0 || dayOfWeek === 6;
+
+  // V3 FIX 5: Detect BTC dump for altcoin signal suppression
+  let btcDumping = false;
+
   // 2. Fetch all asset classes in parallel
   const [cryptoRes, forexRes, commodityRes] = await Promise.allSettled([
     fetchCoinGecko(sentiment),
-    fetchTwelveForex(TD_KEY, sentiment),
-    fetchCommodities(TD_KEY, sentiment),
+    isWeekend ? Promise.resolve([]) : fetchTwelveForex(TD_KEY, sentiment),
+    isWeekend ? Promise.resolve([]) : fetchCommodities(TD_KEY, sentiment),
   ]);
 
+  // V3 FIX 5: Detect BTC dump (24h change < -5%)
+  const rawCrypto = cryptoRes.status === "fulfilled" ? cryptoRes.value : [];
+  const btcAsset = rawCrypto.find((a) => a.symbol === "BTC");
+  if (btcAsset && btcAsset.change24h < -5) btcDumping = true;
+
   // Apply sentiment adjustment to crypto assets
-  const cryptoAssets = (cryptoRes.status === "fulfilled" ? cryptoRes.value : []).map((a) => {
+  const cryptoAssets = rawCrypto.map((a) => {
     const key = a.symbol.toUpperCase();
     const sentAdj = computeSentimentAdjustment({
       fundingRate:     (funding as Record<string, number>)[key],
@@ -558,7 +586,7 @@ export async function GET() {
   // 3. Process all 4 variants in parallel
   const VARIANTS: VariantId[] = ["1", "2", "3", "4"];
   const results = await Promise.allSettled(
-    VARIANTS.map((v) => processVariant(v, allAssets, fearGreedValue))
+    VARIANTS.map((v) => processVariant(v, allAssets, fearGreedValue, btcDumping))
   );
 
   const summary = results.map((r) =>
