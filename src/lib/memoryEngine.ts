@@ -117,10 +117,10 @@ export interface LevelStats {
 
 export interface PerformanceMemory {
   version: number;
-  totalValidated: number;
+  totalValidated: number;    // seulement les WINs + LOSS (pas NEUTRE/expiré)
   totalWins: number;
   totalLosses: number;
-  totalNeutrals: number;
+  totalNeutrals: number;     // expirations (pas comptées dans l'apprentissage)
   totalPoints: number;
   globalWinRate: number;
   learningPhase: "COLD" | "WARMING" | "ACTIVE" | "FULL";
@@ -275,8 +275,16 @@ export function validateWithKlines(
       const slHit  = isLong ? low  <= stopLoss : high >= stopLoss;
       const tp1Hit = isLong ? high >= target1  : low  <= target1;
 
-      if (slHit && !tp1Hit) {
-        // SL touché avant TP1
+      // BUG 3 FIX: Quand SL ET TP1 touchés dans la même candle → PIRE CAS (SL) d'abord
+      if (slHit && tp1Hit) {
+        // Candle ambiguë : conservateur = SL d'abord
+        return {
+          result: "LOSS", points: -1, levelHit: "SL",
+          slPrice: stopLoss, slTouchedAt: ts,
+        };
+      }
+
+      if (slHit) {
         return {
           result: "LOSS", points: -1, levelHit: "SL",
           slPrice: stopLoss, slTouchedAt: ts,
@@ -293,8 +301,8 @@ export function validateWithKlines(
 
         // Dans la même candle : TP2 possible ?
         if (target2 !== undefined) {
-          const tp2Hit = isLong ? high >= target2 : low <= target2;
-          if (tp2Hit) {
+          const tp2InCandle = isLong ? high >= target2 : low <= target2;
+          if (tp2InCandle) {
             return {
               ...result,
               result: "WIN", points: 3, levelHit: "TP2",
@@ -302,9 +310,9 @@ export function validateWithKlines(
             };
           }
         }
-        // Dans la même candle : BE touché après TP1 ?
-        const beHit = isLong ? low <= entry : high >= entry;
-        if (beHit && target2 === undefined) {
+        // BUG 4 FIX: Toujours checker BE dans la même candle (pas seulement si target2 undefined)
+        const beInCandle = isLong ? low <= entry : high >= entry;
+        if (beInCandle) {
           return {
             ...result,
             result: "WIN", points: 1, levelHit: "BE",

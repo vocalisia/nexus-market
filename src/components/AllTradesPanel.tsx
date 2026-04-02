@@ -236,7 +236,7 @@ export function AllTradesPanel({ trades }: { trades: StoredAlert[] }) {
     PENDING: sorted.filter((t) => t.status === "PENDING").length,
     WIN:     sorted.filter((t) => t.status === "WIN").length,
     LOSS:    sorted.filter((t) => t.status === "LOSS").length,
-    NEUTRAL: sorted.filter((t) => t.status === "NEUTRAL").length,
+    NEUTRAL: sorted.filter((t) => t.status === "NEUTRAL").length, // Expiré sans record
   };
 
   const decisive = counts.WIN + counts.LOSS;
@@ -247,7 +247,7 @@ export function AllTradesPanel({ trades }: { trades: StoredAlert[] }) {
     { key: "PENDING", label: `⏳ En cours (${counts.PENDING})`, color: "#F59E0B" },
     { key: "WIN",     label: `✅ WIN (${counts.WIN})`,          color: "#34D399" },
     { key: "LOSS",    label: `❌ LOSS (${counts.LOSS})`,        color: "#FB7185" },
-    { key: "NEUTRAL", label: `⚪ Neutre (${counts.NEUTRAL})`,   color: "#64748B" },
+    { key: "NEUTRAL", label: `⏱️ Expiré (${counts.NEUTRAL})`,   color: "#334155" },
   ];
 
   return (
