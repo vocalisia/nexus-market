@@ -226,14 +226,14 @@ export function generateSignal(
     severity = "low";
   }
 
-  // AI Score override — fires only when NO technical signal qualifies
+  // AI Score override — fires only when NO technical signal qualifies AND conviction is strong
   if (parts.length === 0) {
-    if (score <= 38 && direction === "DOWN") {
+    if (score <= 30 && direction === "DOWN") {
       parts.push(`AI bearish conviction ${score}/100`);
-      severity = score <= 32 ? "high" : "medium";
-    } else if (score >= 62 && direction === "UP") {
+      severity = score <= 25 ? "high" : "medium";
+    } else if (score >= 70 && direction === "UP") {
       parts.push(`AI bullish conviction ${score}/100`);
-      severity = score >= 68 ? "high" : "medium";
+      severity = score >= 75 ? "high" : "medium";
     }
   }
 

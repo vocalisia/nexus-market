@@ -164,7 +164,7 @@ export function buildTradePlan(
   // ── Stop-loss calculation (V3: ATR-based + BB fallback) ──────
   const [minStop, maxStop] = STOP_RANGE[category];
   const atr = calculateATR(prices, Math.min(14, n - 1));
-  const atrPct = price > 0 ? (atr.value * 1.5) / price : 0; // 1.5x ATR = standard SL
+  const atrPct = price > 0 ? (atr.value * 2.0) / price : 0; // 2.0x ATR = room for bounces
 
   let rawStopPct: number;
   if (atrPct > 0) {

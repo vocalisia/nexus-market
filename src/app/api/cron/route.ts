@@ -245,7 +245,7 @@ async function processVariant(
   const losersSet = new Set<string>();
   for (const [sym, stats] of Object.entries(memory.byAsset)) {
     const decisive = stats.wins + stats.losses;
-    if (decisive >= 20 && stats.winRate < 35) {
+    if (decisive >= 10 && stats.winRate < 35) {
       losersSet.add(sym);
     }
   }
@@ -291,6 +291,15 @@ async function processVariant(
     // Data: RANGING=24% WR (13W/41L), BEAR=10% WR (1W/9L) → massacre
     if ((regime.regime === "BEAR" || regime.regime === "RANGING") && sigAdx < 25) continue;
 
+    // FIX WR: Require strong conviction — no more mediocre signals (score 35-65 = noise)
+    const hasStrongConviction =
+      (adjustedDir === "DOWN" && adjustedScore <= 35) ||
+      (adjustedDir === "UP"   && adjustedScore >= 65);
+    if (!hasStrongConviction) continue;
+
+    // FIX WR: Extreme fear (F&G < 20) = no crypto BUY at all
+    if (fearGreedValue < 20 && asset.category === "CRYPTO" && adjustedDir === "UP") continue;
+
     const signal = generateSignal(
       asset.name, asset.symbol, rsi,
       asset.change24h, asset.change7d,
@@ -302,7 +311,7 @@ async function processVariant(
     // BUG 2 FIX: Bloquer SELL crypto en régime BULL + Fear&Greed > 65
     if (isBullCrypto && signal.type === "SELL") continue;
 
-    // V3 FIX 4: Skip chronically losing assets
+    // V3 FIX 4: Skip chronically losing assets (lowered to 10 decisive trades for faster exclusion)
     if (losersSet.has(asset.symbol.toUpperCase())) continue;
 
     // V3 FIX 5: Block altcoin BUY when BTC is dumping > 5%
