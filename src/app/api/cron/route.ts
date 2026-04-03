@@ -291,14 +291,14 @@ async function processVariant(
     // Data: RANGING=24% WR (13W/41L), BEAR=10% WR (1W/9L) → massacre
     if ((regime.regime === "BEAR" || regime.regime === "RANGING") && sigAdx < 25) continue;
 
-    // FIX WR: Require strong conviction — no more mediocre signals (score 35-65 = noise)
+    // FIX WR: Require conviction — SELL ≤ 40, BUY ≥ 65 (adjusted from data distribution)
     const hasStrongConviction =
-      (adjustedDir === "DOWN" && adjustedScore <= 35) ||
+      (adjustedDir === "DOWN" && adjustedScore <= 40) ||
       (adjustedDir === "UP"   && adjustedScore >= 65);
     if (!hasStrongConviction) continue;
 
-    // FIX WR: Extreme fear (F&G < 20) = no crypto BUY at all
-    if (fearGreedValue < 20 && asset.category === "CRYPTO" && adjustedDir === "UP") continue;
+    // FIX WR: Extreme fear (F&G < 20) = block crypto BUY unless extreme oversold (score ≥ 80)
+    if (fearGreedValue < 20 && asset.category === "CRYPTO" && adjustedDir === "UP" && adjustedScore < 80) continue;
 
     const signal = generateSignal(
       asset.name, asset.symbol, rsi,
