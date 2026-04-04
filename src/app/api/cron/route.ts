@@ -368,6 +368,19 @@ async function processVariant(
     dedupMap.set(dk, now);
   }
 
+  // ─── Correlation filter: keep top N per category ────────────
+  // Prevents flooding alerts with 10 correlated crypto signals
+  const MAX_ALERTS_PER_CAT: Record<string, number> = {
+    CRYPTO: 3, FOREX: 2, COMMODITIES: 2, STOCKS: 3,
+  };
+  const sevRank: Record<string, number> = { HIGH: 3, MEDIUM: 2, LOW: 1 };
+  newAlerts.sort((a, b) => (sevRank[b.severity] ?? 0) - (sevRank[a.severity] ?? 0));
+  const catAlertCount: Record<string, number> = {};
+  const filteredAlerts = newAlerts.filter((a) => {
+    catAlertCount[a.category] = (catAlertCount[a.category] ?? 0) + 1;
+    return catAlertCount[a.category] <= (MAX_ALERTS_PER_CAT[a.category] ?? 3);
+  });
+
   // 3. Validate pending alerts
   let validatedCount = 0;
   const updatedExisting: StoredAlert[] = [];
@@ -514,10 +527,10 @@ async function processVariant(
   }
 
   // 4. Merge and save
-  const merged = [...updatedExisting, ...newAlerts].slice(-1000);
+  const merged = [...updatedExisting, ...filteredAlerts].slice(-1000);
   await saveAlerts(variant, merged);
 
-  return { variant, generated: newAlerts.length, validated: validatedCount, errors };
+  return { variant, generated: filteredAlerts.length, validated: validatedCount, errors };
 }
 
 // ─── GET /api/cron — called by Vercel cron ────────────────────

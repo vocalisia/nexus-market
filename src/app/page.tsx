@@ -24,6 +24,7 @@ interface TradePlan {
   stopLoss: number;
   target1: number;
   target2: number;
+  trailStop: number;   // Move SL to this price (= entry = BE) once TP1 is hit
   stopPercent: number;
   target1Percent: number;
   target2Percent: number;
@@ -1071,10 +1072,11 @@ export default function PredictionDashboard() {
                       {/* Entry / Stop / Targets */}
                       <div style={{ display: "flex", flexDirection: "column", gap: 5, marginBottom: 12 }}>
                         {([
-                          { label: "ENTRÉE",  val: selectedAsset.tradePlan.entry,   pct: null,                                          color: "#F1F5F9" },
-                          { label: "STOP",    val: selectedAsset.tradePlan.stopLoss, pct: selectedAsset.tradePlan.stopPercent,           color: "#FB7185" },
-                          { label: "CIBLE 1", val: selectedAsset.tradePlan.target1,  pct: selectedAsset.tradePlan.target1Percent,        color: "#34D399" },
-                          { label: "CIBLE 2", val: selectedAsset.tradePlan.target2,  pct: selectedAsset.tradePlan.target2Percent,        color: "#34D399" },
+                          { label: "ENTRÉE",  val: selectedAsset.tradePlan.entry,      pct: null,                                           color: "#F1F5F9" },
+                          { label: "STOP",    val: selectedAsset.tradePlan.stopLoss,   pct: selectedAsset.tradePlan.stopPercent,            color: "#FB7185" },
+                          { label: "CIBLE 1", val: selectedAsset.tradePlan.target1,    pct: selectedAsset.tradePlan.target1Percent,         color: "#34D399" },
+                          { label: "→ BE",    val: selectedAsset.tradePlan.trailStop ?? selectedAsset.tradePlan.entry, pct: 0,             color: "#FBBF24" },
+                          { label: "CIBLE 2", val: selectedAsset.tradePlan.target2,    pct: selectedAsset.tradePlan.target2Percent,         color: "#34D399" },
                         ] as { label: string; val: number; pct: number | null; color: string }[]).map(({ label, val, pct, color }) => (
                           <div key={label} style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", gap: 4 }}>
                             <span style={{ fontFamily: R, fontSize: 10, color: "#475569", letterSpacing: "0.1em", width: 50, flexShrink: 0 }}>{label}</span>

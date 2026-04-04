@@ -190,8 +190,14 @@ export async function GET(req: NextRequest) {
     // 3. Macro correlation context
     const macroCtx = computeMacroContext(allAssets);
 
+    // ─── Correlation filter config ───────────────────────────────
+    // Prevents over-trading correlated assets (e.g. 10 crypto signals in same direction)
+    const MAX_SIGNALS_PER_CAT: Record<string, number> = {
+      CRYPTO: 3, FOREX: 2, COMMODITIES: 2, STOCKS: 3,
+    };
+
     // 4. Apply macro adjustments + generate signals (using learned indicator weights)
-    const signals: Signal[] = [];
+    const rawSignals: Array<{ signal: Signal; category: string }> = [];
     const assetsWithPlans: Asset[] = allAssets.map((a) => {
       const rsi = calculateRSI(a.sparkline);
       const adxVal = calculateADX(a.sparkline, a.sparkline, a.sparkline) ?? 0;
@@ -284,7 +290,7 @@ export async function GET(req: NextRequest) {
           fearGreed: fearGreed.value,
           aiScore: finalScore,
         };
-        signals.push({ ...signal, indicatorsSnapshot: snapshot });
+        rawSignals.push({ signal: { ...signal, indicatorsSnapshot: snapshot }, category: a.category });
       }
 
       // Force tradePlan direction to match the signal to avoid SL/TP inversion
@@ -305,6 +311,20 @@ export async function GET(req: NextRequest) {
         ),
       };
     });
+
+    // ─── Correlation filter: keep top N signals per category ─────
+    // Sort HIGH > MEDIUM > LOW, then by aiScore desc
+    const severityRank = { high: 3, medium: 2, low: 1 } as const;
+    rawSignals.sort((a, b) =>
+      (severityRank[b.signal.severity] ?? 0) - (severityRank[a.signal.severity] ?? 0)
+    );
+    const catCount: Record<string, number> = {};
+    const signals: Signal[] = rawSignals
+      .filter(({ category }) => {
+        catCount[category] = (catCount[category] ?? 0) + 1;
+        return catCount[category] <= (MAX_SIGNALS_PER_CAT[category] ?? 3);
+      })
+      .map(({ signal }) => signal);
 
     return NextResponse.json(
       { assets: assetsWithPlans, polymarket, signals, fearGreed, lastUpdated: new Date().toISOString(), demo: !TD_KEY },

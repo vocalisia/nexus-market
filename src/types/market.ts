@@ -9,6 +9,7 @@ export interface TradePlan {
   stopLoss: number;
   target1: number;
   target2: number;
+  trailStop: number;   // Move SL here (= entry = Break Even) once TP1 is hit
   stopPercent: number;
   target1Percent: number;
   target2Percent: number;

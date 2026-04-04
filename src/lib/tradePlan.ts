@@ -38,6 +38,7 @@ export function buildTradePlan(
       stopLoss: 0,
       target1: 0,
       target2: 0,
+      trailStop: 0,
       stopPercent: 0,
       target1Percent: 0,
       target2Percent: 0,
@@ -197,6 +198,7 @@ export function buildTradePlan(
     stopLoss,
     target1,
     target2,
+    trailStop: entry,  // Break Even: move SL here once TP1 is hit
     stopPercent:    ((stopLoss  - entry) / entry) * 100,
     target1Percent: ((target1  - entry) / entry) * 100,
     target2Percent: ((target2  - entry) / entry) * 100,
